@@ -1252,3 +1252,71 @@ TEST_F(WindowAggregatorTest, ScaleUpCudaGraphCommunicatorCountTimeOnlyAndSuppres
         EXPECT_FALSE(ct.second.getLatencyFromLinearRegression(lat));
     }
 }
+
+TEST_F(WindowAggregatorTest, CudaGraphCommunicatorStillKeepsProxyTransferTiming)
+{
+    const uint64_t SHARED_PTIMER_START = 7000000;
+
+    std::unique_ptr<CommunicatorState> commState(new CommunicatorState());
+    commState->nranks     = 8;
+    commState->rank       = 0;
+    commState->comm_hash  = 0;
+    commState->local_rank = 0;
+    commState->hostname   = "test";
+    commState->comm_type  = CommunicatorState::CommType::COLLECTIVE;
+
+    const size_t BYTES = 1024 * 1024;
+
+    // First, create CUDA-graph evidence from kernel-only collectives.
+    auto coll1 =
+        createCollectiveEventWithCommState("AllReduce", "Ring", "Simple", 2, BYTES, 100.0, 200.0, commState.get());
+    aggregator->addEvent(coll1);
+    auto kch1 = createKernelChEvent(0, SHARED_PTIMER_START, SHARED_PTIMER_START + 1000, 200.0, 220.0, &coll1);
+    aggregator->addEvent(kch1);
+
+    auto coll2 =
+        createCollectiveEventWithCommState("AllReduce", "Ring", "Simple", 2, BYTES, 300.0, 400.0, commState.get());
+    aggregator->addEvent(coll2);
+    auto kch2 = createKernelChEvent(0, SHARED_PTIMER_START, SHARED_PTIMER_START + 2000, 400.0, 420.0, &coll2);
+    aggregator->addEvent(kch2);
+
+    // Then add a scale-out style collective that has real ProxyOp/ProxyStep timing.
+    auto coll3 =
+        createCollectiveEventWithCommState("AllReduce", "Ring", "Simple", 2, BYTES, 500.0, 550.0, commState.get());
+    aggregator->addEvent(coll3);
+    auto proxyOp      = createProxyOpEvent(1, 0, 262144, 505.0, 560.0, &coll3);
+    proxyOp.commState = commState.get();
+    aggregator->addEvent(proxyOp);
+    auto proxyStep      = createProxyStepEvent(0, 262144, 505.0, 520.0, 560.0, &proxyOp);
+    proxyStep.commState = commState.get();
+    aggregator->addEvent(proxyStep);
+
+    aggregator->finalize();
+
+    EXPECT_STREQ(commState->getScaleUpExecModeString(), "cuda_graph");
+
+    const auto& collectives = aggregator->getCollectives();
+    auto collIt             = collectives.find("Comm0_AllReduce_Ring_Simple_2Chnl");
+    ASSERT_NE(collIt, collectives.end());
+    EXPECT_EQ(collIt->second.count, 3);
+    EXPECT_GT(collIt->second.getTotalTransferCount(), 0);
+    EXPECT_GT(collIt->second.cachedTotalTransferTimeUs, 0.0);
+
+    const auto& rankTransfers = aggregator->getRankTransfers();
+    ASSERT_FALSE(rankTransfers.empty());
+    auto rankIt = rankTransfers.find("Comm0_Rank0_ToPeer1");
+    ASSERT_NE(rankIt, rankTransfers.end());
+    EXPECT_GT(rankIt->second.totalBytes, 0u);
+    EXPECT_GT(rankIt->second.totalTimeUs, 0.0);
+    EXPECT_FALSE(rankIt->second.intervals.empty());
+    double rate = 0.0;
+    EXPECT_TRUE(rankIt->second.getRateFromActiveTime(rate));
+
+    const auto& channelTransfers = aggregator->getChannelTransfers();
+    ASSERT_FALSE(channelTransfers.empty());
+    auto channelIt = channelTransfers.find("Comm0_Rank0_ToPeer1_Chnl0");
+    ASSERT_NE(channelIt, channelTransfers.end());
+    EXPECT_GT(channelIt->second.totalBytes, 0u);
+    EXPECT_GT(channelIt->second.totalTimeUs, 0.0);
+    EXPECT_FALSE(channelIt->second.intervals.empty());
+}

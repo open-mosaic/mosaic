@@ -291,10 +291,11 @@ static void exportCollectiveMetrics(const std::string& key, const AggregatedColl
         {
             g_collNumTransfersHist->Record(avgNumTransfers, labels, opentelemetry::context::Context{});
             g_collTransferSizeHist->Record(avgTransferSize, labels, opentelemetry::context::Context{});
-            // In CUDA Graph scale-up mode we still report transfer count/size, but we suppress
-            // transfer time (and any bandwidth/latency derived from time) because timing
-            // sources are unreliable under graph replay.
-            if (scale_up_exec_mode != "cuda_graph")
+            // Only export transfer time when aggregation produced real timing data.
+            // CUDA-graph scale-up volume-only paths intentionally leave this at 0,
+            // while scale-out proxy paths still carry actual ProxyStep timing even
+            // if the communicator is tagged as cuda_graph.
+            if (coll.cachedTotalTransferTimeUs > 0.0)
             {
                 g_collTransferTimeHist->Record(avgTransferTime, labels, opentelemetry::context::Context{});
             }
@@ -417,7 +418,8 @@ static void exportP2PMetrics(const std::string& key, const AggregatedP2P& p2p, i
         {
             g_p2pNumTransfersHist->Record(avgNumTransfers, labels, opentelemetry::context::Context{});
             g_p2pTransferSizeHist->Record(avgTransferSize, labels, opentelemetry::context::Context{});
-            if (scale_up_exec_mode != "cuda_graph")
+            // Same policy as collectives: suppress only when no timing data exists.
+            if (p2p.cachedTotalTransferTimeUs > 0.0)
             {
                 g_p2pTransferTimeHist->Record(avgTransferTime, labels, opentelemetry::context::Context{});
             }
@@ -523,14 +525,6 @@ static void exportRankMetrics(const std::string& key, const AggregatedTransfer& 
 
     // Export rank bytes
     g_rankBytesCounter->Add(transferRef.totalBytes, labels, opentelemetry::context::Context{});
-
-    // In CUDA Graph scale-up mode we still export bytes (volume), but we suppress
-    // latency and bandwidth because they depend on time-domain heuristics that
-    // are not reliable under graph replay.
-    if (scale_up_exec_mode == "cuda_graph")
-    {
-        return;
-    }
 
     // Export rank latency (from linear regression)
     double latencyUs;
@@ -661,14 +655,14 @@ static void exportTransferMetrics(const std::string& key, const AggregatedTransf
         };
 
         g_transferSizeHist->Record(avgSize, labels, opentelemetry::context::Context{});
-        if (scale_up_exec_mode != "cuda_graph")
+        if (transferRef.totalTimeUs > 0.0)
         {
             g_transferTimeHist->Record(avgTime, labels, opentelemetry::context::Context{});
         }
 
         // Export transfer latency (from linear regression)
         double latencyUs;
-        if (scale_up_exec_mode != "cuda_graph" && transferRef.getLatencyFromLinearRegression(latencyUs))
+        if (transferRef.getLatencyFromLinearRegression(latencyUs))
         {
             g_transferLatencyHist->Record(latencyUs, labels, opentelemetry::context::Context{});
 
