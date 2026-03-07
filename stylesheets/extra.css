@@ -1,0 +1,9 @@
+/*
+ * SPDX-FileCopyrightText: 2025 Delos Data Inc
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+:root  > * {
+    --md-primary-fg-color:        #0081E1;
+    --md-accent-fg-color:         #0081E1;
+}
