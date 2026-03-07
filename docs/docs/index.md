@@ -10,16 +10,16 @@ SPDX-License-Identifier: Apache-2.0
 
 # Introduction
 
-{==Mosaic is an open-source always-on observability tool for GPU collective communication,
+{==Open Mosaic is an open-source always-on observability tool for GPU collective communication,
 providing near real-time visibility into performance and reliability issues in large-scale AI workloads.==}
 It treats collective communication as first-class OpenTelemetry data, enabling correlation with GPU, network, and system signals in a single view.
 
 At GPU scale, where failures and inefficiencies are inevitable,
-Mosaic makes these issues visible early, shifting observability from postmortem analysis to continuous operations.
+Open Mosaic makes these issues visible early, shifting observability from postmortem analysis to continuous operations.
 
 No offline tracing, no bespoke pipelines, and no invasive instrumentation.
 
-Mosaic is hosted on [GitHub](https://github.com/open-mosaic/mosaic), licensed under **Apache 2.0**.
+Open Mosaic is hosted on [GitHub](https://github.com/open-mosaic/mosaic), licensed under **Apache 2.0**.
 
 # Background
 
@@ -40,12 +40,12 @@ Most GPU and CCL tools focus on postmortem analysis: they help explain why perfo
 But at modern GPU scale, observability must be continuous.
 Operators has a {==need to see collective-level pathologies as they emerge, immediately correlate them with other system metrics==}, such that further recovery action can be taken.
 
-Mosaic is built around this shift.
+Open Mosaic is built around this shift.
 It provides always-on, near real-time observability for collective communication, treating collective communication as first-class OpenTelemetry data.
-Mosaic streams these signals directly into a standard Grafana LGTM stack, where they can be viewed alongside other GPU and system metrics in a single dashboard.
+Open Mosaic streams these signals directly into a standard Grafana LGTM stack, where they can be viewed alongside other GPU and system metrics in a single dashboard.
 This makes issues like slow ranks, imbalanced collectives, or network-induced stalls visible while workloads are still running.
 
 !!! info "Key Takeaway"
     As GPU scale, failures and inefficiencies are inevitable.
     What matters is whether you can see and understand them early enough to act.
-    Mosaic shifts GPU observability from forensic debugging to continuous operations, where real reliability gains and cost savings are made.
+    Open Mosaic shifts GPU observability from forensic debugging to continuous operations, where real reliability gains and cost savings are made.

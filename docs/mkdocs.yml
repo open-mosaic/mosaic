@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2025 Delos Data Inc
 # SPDX-License-Identifier: Apache-2.0
 
-site_name: Mosaic
-site_url: https://mydomain.org/
+site_name: Open Mosaic
+site_url: https://openmosaic.ai/
 
 theme:
   name: material
