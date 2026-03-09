@@ -36,9 +36,9 @@ cd mosaic
 # Generate Mosaic Metrics Scraping Configuration
 
 We need to generate one metric scraping configuration per GPU server in production deployment.
-For this quick start tutorial, we only need to do it on one host:
+For this quick start tutorial, we only need to do it for one host:
 
-``` bash title="Scrape configuration from localhost"
+``` bash title="Scrape configuration from Docker host"
 ./deployments/file_sd_configs/file-sd-config-generate.sh host -i 172.17.0.1
 ```
 
