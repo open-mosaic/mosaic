@@ -16,3 +16,6 @@ symspellpy>=6.9.0
 
 # License checking
 reuse>=6.2.0
+
+# Versioning
+mike>=2.1.4

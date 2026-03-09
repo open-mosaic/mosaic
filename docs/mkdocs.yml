@@ -39,6 +39,10 @@ theme:
 extra_css:
   - stylesheets/extra.css
 
+extra:
+  version:
+    provider: mike
+
 plugins:
   - search
   - spellcheck:
