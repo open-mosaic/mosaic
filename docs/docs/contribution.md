@@ -65,6 +65,19 @@ We welcome contributions through pull requests! Here's a high-level overview of 
 - Respond promptly to review feedback
 - Be patient - maintainers are volunteers and may take time to review
 
+## Contribute Test Cases
+
+When adding new test cases, follow these guidelines:
+
+- **Place tests in the correct location** - Add test files to the appropriate suite under `tests/suites`. Create a new suite if testing a new component or feature.
+- **Keep test files focused** - Each test file should only contain test cases. Move fixtures and constants to `conftest.py`.
+- **Include required docstrings** - Every test function must have a docstring with `:title:`, `:suite:`, and `:description:` fields.
+- **Use descriptive names** - Test function names should clearly indicate what is being tested.
+- **Add assertions with messages** - Always include descriptive error messages in assertions to aid debugging.
+- **Register custom markers** - If adding new pytest markers, register them in `tests/suites/conftest.py`.
+- **Follow the Python style guide** - Follow the PEP 8 coding style.
+- **Clean up resources** - Use fixture teardown or context managers to ensure proper cleanup after tests.
+
 # Update Documentation
 
 Mosaic documentation is built with [Material for MkDocs](https://squidfunk.github.io/mkdocs-material/).
