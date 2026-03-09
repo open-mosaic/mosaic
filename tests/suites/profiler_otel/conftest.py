@@ -134,7 +134,7 @@ def vllm_ready(vllm_client: VllmClient) -> bool:
     """
     is_ready = vllm_client.wait_for_ready(timeout=VLLM_READY_TIMEOUT)
     if not is_ready:
-        pytest.skip("vLLM server not ready within timeout")
+        pytest.fail("vLLM server not ready within timeout")
     return True
 
 
