@@ -448,7 +448,7 @@
           "refId": "A"
         }
       ],
-      "title": "Workload Processes",
+      "title": "Workload Thread Count",
       "type": "stat"
     },
     {

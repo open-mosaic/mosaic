@@ -1,9 +1,6 @@
 # SPDX-FileCopyrightText: 2025 Delos Data Inc
 # SPDX-License-Identifier: Apache-2.0
 
-include:
-  - ./docker-compose.yml
-
 services:
   mosaic-vllm:
     build:
@@ -14,7 +11,7 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - NCCL_PROFILER_OTEL_TELEMETRY_ENDPOINT=http://mosaic-otel-lgtm:4318
+      - NCCL_PROFILER_OTEL_TELEMETRY_ENDPOINT=http://172.17.0.1:4318
       - VLLM_LOGGING_LEVEL=DEBUG
     deploy:
       resources:
@@ -34,10 +31,5 @@ services:
       start_period: 300s  # 5 minutes for model download and loading
     stop_grace_period: 30s
     restart: unless-stopped
-    depends_on:
-      - otel-lgtm
     volumes:
       - ${HOME}/.cache/huggingface:/root/.cache/huggingface
-    # Connect to the same network as the OTEL stack
-    networks:
-      - nccl-profiler

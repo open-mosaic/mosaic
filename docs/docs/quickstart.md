@@ -30,10 +30,16 @@ Fetch the source repository and the pre-built images.
 
 ``` bash title="Clone the Mosaic repository"
 git clone https://github.com/open-mosaic/mosaic.git
+cd mosaic
 ```
 
-``` bash title="Pull the vLLM image with Mosaic profiler plugin"
-docker pull openmosaic/mosaic-vllm:1.0.0
+# Generate Mosaic Metrics Scraping Configuration
+
+We need to generate one metric scraping configuration per GPU server in production deployment.
+For this quick start tutorial, we only need to do it on one host:
+
+``` bash title="Scrape configuration from localhost"
+./deployments/file_sd_configs/file-sd-config-generate.sh host -i 172.17.0.1
 ```
 
 #  Launch Mosaic Infrastructure
@@ -41,11 +47,11 @@ docker pull openmosaic/mosaic-vllm:1.0.0
 Mosaic relies on the LGTM (Loki, Grafana, Tempo, Mimir) stack and specific hardware exporters to collect and visualize data.
 
 ``` bash title="Launch LGTM stack"
-docker compose -f ./mosaic/deployments/docker-compose.yml up -d
+docker compose -f ./deployments/docker-compose.yml up -d
 ```
 
 ``` bash title="Launch GPU and System exporters"
-docker compose -f ./mosaic/deployments/nvidia-gpu-monitoring/docker-compose.yml \
+docker compose -f ./deployments/nvidia-gpu-monitoring/docker-compose.yml \
   --profile=node-exporter \
   --profile=nvidia-device-exporter \
   --profile=process-exporter \
@@ -61,7 +67,7 @@ The following command will launch a vLLM container with Mosaic profiler plugin a
 Metrics are configured to stream to Mosaic while the inference is running.
 
 ``` bash title="Launch vLLM"
-docker compose -f ./mosaic/deployments/docker-compose-vllm.yml up -d
+docker compose -f ./deployments/docker-compose-vllm.yml up -d
 ```
 
 !!! tip
