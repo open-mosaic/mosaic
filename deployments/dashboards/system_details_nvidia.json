@@ -974,7 +974,7 @@
           },
           "disableTextWrap": false,
           "editorMode": "code",
-          "expr": "namedprocess_namegroup_num_threads{host=~\"$host\", groupname=~\"nccl-tests|ray\"}",
+          "expr": "namedprocess_namegroup_num_threads{host=~\"$host\", groupname=~\"nccl-tests|ray|vllm\"}",
           "fullMetaSearch": false,
           "includeNullMetadata": true,
           "instant": false,
@@ -984,7 +984,7 @@
           "useBackend": false
         }
       ],
-      "title": "NCCL Thread Count",
+      "title": "Workload Thread Count",
       "type": "timeseries"
     }
   ],

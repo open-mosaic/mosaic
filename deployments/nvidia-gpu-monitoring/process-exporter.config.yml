@@ -21,3 +21,6 @@ process_names:
   - name: "ray"
     cmdline:
     - 'ray::.*'
+  - name: "vllm"
+    cmdline:
+    - 'vllm serve\s'

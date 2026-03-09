@@ -4,6 +4,7 @@
 # Include the OTEL stack (Prometheus, Grafana, OTEL Collector)
 # MOSAIC_PATH should be path to the mosaic repo
 include:
+  - ../deployments/docker-compose.yml
   - ../deployments/docker-compose-vllm.yml
 
 services:
