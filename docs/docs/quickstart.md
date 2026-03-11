@@ -29,7 +29,7 @@ A Docker runtime with the NVIDIA Container Toolkit is required.
 Fetch the source repository and the pre-built images.
 
 ``` bash title="Clone the Mosaic repository"
-git clone -b 1.0.0 https://github.com/open-mosaic/mosaic.git
+git clone https://github.com/open-mosaic/mosaic.git
 cd mosaic
 ```
 
