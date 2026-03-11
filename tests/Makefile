@@ -23,6 +23,7 @@ run-tests:
 
 copy-test-results:
 	mkdir -p $(RESULTS_DIR) \
+	&& chown -R $$(whoami):$$(whoami) $(RESULTS_DIR) \
 	&& docker cp $(FRAMEWORK_CONTAINER_NAME):/app/results/test_results.xml $(RESULTS_DIR)/test_results.xml
 
 # Run the tests and copy the results to the results directory
