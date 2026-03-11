@@ -87,7 +87,7 @@ They use the [Production Test Framework](https://github.com/open-mosaic/producti
 
 ```bash title="Run the integration tests"
 cd tests
-# results are in JUnitXML and located at /tmp/mosiac/test_results.xml
+# results are in JUnitXML and located at ${HOME}/tmp/mosaic/test_results.xml
 make test
 ```
 
