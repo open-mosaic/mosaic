@@ -6,7 +6,7 @@ services:
     build:
       context: .
       dockerfile: ../profiler/Dockerfile
-    image: openmosaic/mosaic-vllm:1.0.0
+    image: openmosaic/mosaic-vllm:latest
     container_name: mosaic-vllm
     ports:
       - "8080:8080"
