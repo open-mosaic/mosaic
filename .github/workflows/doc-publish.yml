@@ -22,21 +22,21 @@ jobs:
       run:
         working-directory: docs
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+
       - name: Generate GitHub App token
         id: app-token
         uses: actions/create-github-app-token@v2
         with:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
       - name: Configure Git Credentials
         run: |
-          git config user.name OpenMosaic-Bot[bot]
-          git config user.email 3067573+OpenMosaic-Bot[bot]@users.noreply.github.com
-          git remote set-url origin \
-            https://x-access-token:${{ steps.app-token.outputs.token }}@github.com/${{ github.repository }}
+          git config user.name openmosaic[bot]
+          git config user.email 3067573+openmosaic[bot]@users.noreply.github.com
       - uses: actions/setup-python@v5
         with:
           python-version: 3.x
@@ -53,21 +53,20 @@ jobs:
       run:
         working-directory: docs
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - name: Generate GitHub App token
         id: app-token
         uses: actions/create-github-app-token@v2
         with:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
       - name: Configure Git Credentials
         run: |
-          git config user.name OpenMosaic-Bot[bot]
-          git config user.email 3067573+OpenMosaic-Bot[bot]@users.noreply.github.com
-          git remote set-url origin \
-            https://x-access-token:${{ steps.app-token.outputs.token }}@github.com/${{ github.repository }}
+          git config user.name openmosaic[bot]
+          git config user.email 3067573+openmosaic[bot]@users.noreply.github.com
       - uses: actions/setup-python@v5
         with:
           python-version: 3.x
