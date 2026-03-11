@@ -5,7 +5,7 @@
 MOSAIC_PATH ?= $(abspath ..)
 export MOSAIC_PATH
 
-RESULTS_DIR ?= /tmp/mosaic
+RESULTS_DIR ?= $(HOME)/tmp/mosaic
 
 FRAMEWORK_SERVICE_NAME ?= production-test-framework
 FRAMEWORK_CONTAINER_NAME ?= production-test-framework
@@ -22,8 +22,8 @@ run-tests:
 	docker compose run --name $(FRAMEWORK_CONTAINER_NAME) $(FRAMEWORK_SERVICE_NAME) 
 
 copy-test-results:
+	rm -rf $(RESULTS_DIR)
 	mkdir -p $(RESULTS_DIR) \
-	&& chown -R $$(whoami):$$(whoami) $(RESULTS_DIR) \
 	&& docker cp $(FRAMEWORK_CONTAINER_NAME):/app/results/test_results.xml $(RESULTS_DIR)/test_results.xml
 
 # Run the tests and copy the results to the results directory

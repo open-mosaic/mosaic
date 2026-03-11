@@ -24,14 +24,14 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Run integration tests
-        run: make test
+        run: echo "HOME=$HOME" >> $GITHUB_ENV && make test
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: integration-test-results
-          path: /tmp/mosaic/test_results.xml
+          path: ${{ env.HOME }}/tmp/mosaic/test_results.xml
           retention-days: 7
 
       - name: Report test results
