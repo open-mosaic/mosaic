@@ -16,7 +16,13 @@ FRAMEWORK_CONTAINER_NAME ?= production-test-framework
 .IGNORE: copy-test-results
 
 setup:
-	docker compose up -d
+	@echo "Starting container stack..."
+	@docker compose up -d
+
+cleanup:
+	@echo "Cleaning up container stack..."
+	@docker compose down --remove-orphans \
+	&& docker container prune -f
 
 run-tests:
 	docker compose run --name $(FRAMEWORK_CONTAINER_NAME) $(FRAMEWORK_SERVICE_NAME) 
@@ -33,6 +39,3 @@ test: setup
 	$(MAKE) cleanup; \
 	exit $$EXIT_CODE
 
-cleanup:
-	docker compose down --remove-orphans \
-	&& docker container prune -f
