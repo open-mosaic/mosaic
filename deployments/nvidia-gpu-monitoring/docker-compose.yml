@@ -3,7 +3,7 @@
 
 services:
   nvidia-device-exporter:
-    image: nvidia/dcgm-exporter:4.5.1-4.8.0-distroless
+    image: nvidia/dcgm-exporter:4.5.2-4.8.1-distroless
     container_name: mosaic-nvidia-device-exporter
     profiles:
       - nvidia-device-exporter
@@ -21,7 +21,7 @@ services:
     restart: unless-stopped
 
   node-exporter:
-    image: prom/node-exporter:latest
+    image: prom/node-exporter:v1.10.2
     container_name: mosaic-node-exporter
     profiles:
       - node-exporter
@@ -40,7 +40,7 @@ services:
     restart: unless-stopped
 
   process-exporter:
-    image: ncabatoff/process-exporter:latest
+    image: ncabatoff/process-exporter:v0.8.7
     container_name: mosaic-process-exporter
     command:
       - -config.path=/etc/process-exporter/config.yml
