@@ -69,7 +69,7 @@ Command-line options:
 | `--max-uptime` | 3600 | Exit after this many seconds so the container is restarted by Docker (e.g. to avoid the exporter stopping reporting metrics). Use `0` to disable. |
 | `--test` | — | Print GPU mappings and exit (no server) |
 
-The exporter exits after `--max-uptime` seconds (default: 1 hour). With Docker’s `restart: unless-stopped` policy, the container is restarted automatically, which keeps the `gpu_pcie_port` metric reporting reliably.
+The exporter exits after `--max-uptime` seconds (default: 1 hour). With Docker’s `restart: always` policy, the container is restarted automatically, which keeps the `gpu_pcie_port` metric reporting reliably.
 
 To customize options when using Docker Compose, override the command in `docker-compose.yml`, for example:
 
@@ -105,10 +105,10 @@ gpu-pcie-exporter:
             capabilities: [gpu]
   volumes:
     - /usr/bin/nvidia-smi:/usr/bin/nvidia-smi:ro
-  restart: unless-stopped
+  restart: always
 ```
 
-### ;lExample docker-compose when monitoring AMD GPUs via `rocm-smi`:
+### Example docker-compose when monitoring AMD GPUs via `rocm-smi`:
 
 ```yaml
 gpu-pcie-exporter:
@@ -126,5 +126,5 @@ gpu-pcie-exporter:
   environment:
     - PATH=/usr/local/bin:/opt/rocm/bin:/usr/bin:/usr/sbin:/bin:/sbin
     - LD_LIBRARY_PATH=/opt/rocm/lib:/usr/lib:/usr/local/lib
-  restart: unless-stopped
+  restart: always
 ```

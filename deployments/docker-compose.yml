@@ -32,7 +32,7 @@ services:
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
     networks:
       - nccl-profiler
-    restart: unless-stopped
+    restart: always
 
   pipeline-analyzer:
     # Uncommit it to build the image locally
@@ -48,7 +48,7 @@ services:
       - otel-lgtm
     networks:
       - nccl-profiler
-    restart: unless-stopped
+    restart: always
 
 networks:
   nccl-profiler:

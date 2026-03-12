@@ -18,7 +18,7 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-    restart: unless-stopped
+    restart: always
 
   node-exporter:
     image: prom/node-exporter:v1.10.2
@@ -37,7 +37,7 @@ services:
       - '--path.rootfs=/rootfs'
       - '--path.sysfs=/host/sys'
       - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|run|snapd|var/snap|snap)($|/)'
-    restart: unless-stopped
+    restart: always
 
   process-exporter:
     image: ncabatoff/process-exporter:v0.8.7
@@ -52,4 +52,4 @@ services:
       - process-exporter
     ports:
       - "9256:9256"
-    restart: unless-stopped
+    restart: always

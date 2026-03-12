@@ -12,7 +12,7 @@ services:
     devices:
       - /dev/kfd
       - /dev/dri
-    restart: unless-stopped
+    restart: always
 
   gpu-pcie-exporter:
     # Uncommit it to build the image locally
@@ -39,7 +39,7 @@ services:
     environment:
       - PATH=/usr/local/bin:/opt/rocm/bin:/usr/bin:/usr/sbin:/bin:/sbin
       - LD_LIBRARY_PATH=/opt/rocm/lib:/usr/lib:/usr/local/lib
-    restart: unless-stopped
+    restart: always
 
   node-exporter:
     image: prom/node-exporter:v1.10.2
@@ -58,7 +58,7 @@ services:
       - '--path.rootfs=/rootfs'
       - '--path.sysfs=/host/sys'
       - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|run|snapd|var/snap|snap)($|/)'
-    restart: unless-stopped
+    restart: always
 
   process-exporter:
     image: ncabatoff/process-exporter:v0.8.7
@@ -73,4 +73,4 @@ services:
       - process-exporter
     ports:
       - "9256:9256"
-    restart: unless-stopped
+    restart: always
