@@ -19,7 +19,7 @@ services:
     # build:
     #   context: ../gpu_pcie_exporter
     #   dockerfile: Dockerfile
-    image: openmosaic/gpu-pcie-exporter:1.0.1
+    image: openmosaic/gpu-pcie-exporter:latest
     container_name: mosaic-gpu-pcie-exporter
     ports:
       - "5052:8000"
