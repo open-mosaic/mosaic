@@ -24,7 +24,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Run integration tests
-        run: echo "HOME=$HOME" >> $GITHUB_ENV && make cleanup &&make test
+        run: echo "HOME=$HOME" >> $GITHUB_ENV && make cleanup && make test
 
       - name: Upload test results
         if: always()
