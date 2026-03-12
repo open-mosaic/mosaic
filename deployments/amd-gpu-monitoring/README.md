@@ -23,7 +23,7 @@ The `docker-compose.yml` file orchestrates multiple monitoring services that col
 - **Source**: https://github.com/ROCm/device-metrics-exporter
 
 ### gpu-pcie-exporter
-- **Build**: Custom image from `../gpu_pcie_exporter`
+- **Build**: `open-mosaic/gpu-pcie-exporter:latest`
 - **Port**: `5052`
 - **Purpose**: Provides information to map hostname and GPU ID to PCIe port number
 - **Device Access**: Requires access to `/dev/kfd` and `/dev/dri`
@@ -31,7 +31,7 @@ The `docker-compose.yml` file orchestrates multiple monitoring services that col
 - **Source**: [gpu_pcie_exporter](../gpu_pcie_exporter/README.md)
 
 ### node-exporter
-- **Image**: `prom/node-exporter:latest`
+- **Image**: `prom/node-exporter:v1.10.2`
 - **Port**: `9100`
 - **Profile**: `node-exporter` (use `--profile node-exporter` to enable)
 - **Purpose**: Collects system-level metrics (CPU, memory, disk, network, etc.)
@@ -39,7 +39,7 @@ The `docker-compose.yml` file orchestrates multiple monitoring services that col
 - **Source**: https://github.com/prometheus/node_exporter
 
 ### process-exporter
-- **Image**: `ncabatoff/process-exporter:latest`
+- **Image**: `ncabatoff/process-exporter:v0.8.7`
 - **Port**: `9256`
 - **Purpose**: Exports process-level metrics for detailed workload analysis
 - **Configuration**: Uses `process-exporter.config.yml` for process filtering

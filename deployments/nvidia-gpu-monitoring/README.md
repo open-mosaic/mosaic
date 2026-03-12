@@ -14,16 +14,16 @@ The `docker-compose.yml` file orchestrates multiple monitoring services that col
 ## Services
 
 ### nvidia-device-exporter
-- **Image**: `utkuozdemir/nvidia_gpu_exporter:1.4.1`
-- **Port**: `5053` (maps to container port `9835`)
+- **Image**: `nvidia/dcgm-exporter:4.5.2-4.8.1-distroless`
+- **Port**: `9400`
 - **Profile**: `nvidia-device-exporter` (use `--profile nvidia-device-exporter` to enable)
-- **Purpose**: Exposes Nvidia device-specific metrics from Nvidia GPUs using nvidia-smi
+- **Purpose**: Exposes Nvidia device-specific metrics from Nvidia GPUs
 - **GPU Access**: Requires access to Nvidia GPUs via Docker's GPU runtime
 - **Note**: This service is only started when using the `nvidia-device-exporter` profile
-- **Source**: https://github.com/utkuozdemir/nvidia_gpu_exporter
+- **Source**: https://github.com/NVIDIA/dcgm-exporter
 
 ### gpu-pcie-exporter
-- **Build**: Custom image from `../gpu_pcie_exporter`
+- **Build**: `open-mosaic/gpu-pcie-exporter:latest`
 - **Port**: `5052`
 - **Purpose**: Provides information to map hostname and GPU ID to PCIe port number
 - **GPU Access**: Requires access to Nvidia GPUs via Docker's GPU runtime
@@ -31,7 +31,7 @@ The `docker-compose.yml` file orchestrates multiple monitoring services that col
 - **Source**: [gpu_pcie_exporter](../gpu_pcie_exporter/README.md)
 
 ### node-exporter
-- **Image**: `prom/node-exporter:latest`
+- **Image**: `prom/node-exporter:v1.10.2`
 - **Port**: `9100`
 - **Profile**: `node-exporter` (use `--profile node-exporter` to enable)
 - **Purpose**: Collects system-level metrics (CPU, memory, disk, network, etc.)
@@ -39,7 +39,7 @@ The `docker-compose.yml` file orchestrates multiple monitoring services that col
 - **Source**: https://github.com/prometheus/node_exporter
 
 ### process-exporter
-- **Image**: `ncabatoff/process-exporter:latest`
+- **Image**: `ncabatoff/process-exporter:v0.8.7`
 - **Port**: `9256`
 - **Purpose**: Exports process-level metrics for detailed workload analysis
 - **Configuration**: Uses `process-exporter.config.yml` for process filtering
