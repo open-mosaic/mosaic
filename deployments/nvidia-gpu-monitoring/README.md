@@ -23,7 +23,7 @@ The `docker-compose.yml` file orchestrates multiple monitoring services that col
 - **Source**: https://github.com/NVIDIA/dcgm-exporter
 
 ### gpu-pcie-exporter
-- **Build**: `open-mosaic/gpu-pcie-exporter:latest`
+- **Build**: `open-mosaic/gpu-pcie-exporter:1.0.1`
 - **Port**: `5052`
 - **Purpose**: Provides information to map hostname and GPU ID to PCIe port number
 - **GPU Access**: Requires access to Nvidia GPUs via Docker's GPU runtime
