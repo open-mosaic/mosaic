@@ -39,7 +39,7 @@ services:
     # build:
     #   context: pipeline-analyzer
     #   dockerfile: Dockerfile
-    image: openmosaic/pipeline-analyzer:1.0.1
+    image: openmosaic/pipeline-analyzer:latest
     container_name: mosaic-pipeline-analyzer
     environment:
       - METRICS_ENDPOINT=http://otel-lgtm:8889/metrics
