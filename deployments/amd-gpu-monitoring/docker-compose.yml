@@ -42,7 +42,7 @@ services:
     restart: unless-stopped
 
   node-exporter:
-    image: prom/node-exporter:latest
+    image: prom/node-exporter:v1.10.2
     container_name: mosaic-node-exporter
     profiles:
       - node-exporter
@@ -61,7 +61,7 @@ services:
     restart: unless-stopped
 
   process-exporter:
-    image: ncabatoff/process-exporter:latest
+    image: ncabatoff/process-exporter:v0.8.7
     container_name: mosaic-process-exporter
     command:
       - -config.path=/etc/process-exporter/config.yml
