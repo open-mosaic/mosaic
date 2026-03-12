@@ -21,7 +21,7 @@ setup:
 
 cleanup:
 	@echo "Cleaning up container stack..."
-	@docker compose down --remove-orphans \
+	@docker compose --profile "*" down --remove-orphans \
 	&& docker container prune -f
 
 run-tests:
