@@ -40,7 +40,7 @@ When in doubt, upgrade to the latest release.
 
 **In scope:**
 
-- The Mosaic profiler plugin (NCCL/RCCL)
+- The Mosaic profiler plugin
 - OpenTelemetry export and configuration
 - Deployment and exporter components in this repository
 - Dependency vulnerabilities in our declared dependencies
@@ -48,7 +48,7 @@ When in doubt, upgrade to the latest release.
 **Out of scope:**
 
 - Third-party observability backends (Grafana, Prometheus, etc.) except where we ship config or code for them
-- NCCL, RCCL, CUDA, or other upstream libraries beyond our use of their APIs
+- NCCL, CUDA, or other upstream libraries beyond our use of their APIs
 - General hardening or best-practice guidance (we welcome docs PRs for those)
 
 ## What to Expect

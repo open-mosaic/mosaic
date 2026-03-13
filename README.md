@@ -19,7 +19,7 @@ Mosaic makes these issues visible early, shifting observability from postmortem 
 No offline tracing, no bespoke pipelines, and no invasive instrumentation.
 
 ### Getting Started
-To get Mosaic up and running in your environment, follow our [Quick Start Guide](https://open-mosaic.github.io/mosaic/quickstart/).
+To get Mosaic up and running in your environment, follow our [Quick Start Guide](https://openmosaic.ai/latest/quickstart/).
 
 ### Documentation
-For a deep dive into core concepts, architecture, and advanced configuration, visit [Mosaic Documentation](https://open-mosaic.github.io/mosaic/)
+For a deep dive into core concepts, architecture, and advanced configuration, visit [Mosaic Documentation](https://openmosaic.ai)
