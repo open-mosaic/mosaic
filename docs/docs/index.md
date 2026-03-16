@@ -8,6 +8,8 @@ SPDX-FileCopyrightText: 2025 Delos Data Inc
 SPDX-License-Identifier: Apache-2.0
 -->
 
+![Open Mosaic Logo](images/logo.png)
+
 # Introduction
 
 {==Open Mosaic is an open-source always-on observability tool for GPU collective communication,
