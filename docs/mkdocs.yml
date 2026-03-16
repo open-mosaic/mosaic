@@ -6,6 +6,7 @@ site_url: https://openmosaic.ai/
 
 theme:
   name: material
+  logo: images/logo-only.png
   font:
     text: Google Sans
     code: Google Sans Mono

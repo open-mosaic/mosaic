@@ -4,6 +4,19 @@
  */
 
 :root  > * {
-    --md-primary-fg-color:        #0081E1;
+    --md-primary-fg-color:        #1F2128;
     --md-accent-fg-color:         #0081E1;
+}
+
+/* Target the logo image within the header navigation */
+.md-header img,
+.md-header__button.md-logo img {
+    height: 40px; /* Adjust height as needed */
+    width: auto;  /* Maintain aspect ratio */
+}
+
+/* Target the logo in the drawer navigation (for mobile views) */
+.md-nav__button.md-logo img {
+    height: 40px; /* Adjust height as needed */
+    width: auto;  /* Maintain aspect ratio */
 }
