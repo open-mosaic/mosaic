@@ -43,6 +43,7 @@ jobs:
           cache-dependency-path: docs/requirements.txt
       - run: pip install -r requirements.txt
       - run: mike deploy --push latest
+      - run: mike set-default --push latest
 
   deploy-tag:
     name: Deploy tag
@@ -73,4 +74,3 @@ jobs:
           cache-dependency-path: docs/requirements.txt
       - run: pip install -r requirements.txt
       - run: mike deploy --push ${{ github.ref_name }}
-      - run: mike set-default --push ${{ github.ref_name }}

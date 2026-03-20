@@ -3,6 +3,8 @@ SPDX-FileCopyrightText: 2025 Delos Data Inc
 SPDX-License-Identifier: Apache-2.0
 -->
 
+![Open Mosaic Logo](docs/docs/images/logo-light.png)
+
 # Mosaic: Always-on GPU Collective Observability
 
 [![Integration Test](https://github.com/open-mosaic/mosaic/actions/workflows/integration-tests.yml/badge.svg?branch=main)](https://github.com/open-mosaic/mosaic/actions/workflows/integration-tests.yml)

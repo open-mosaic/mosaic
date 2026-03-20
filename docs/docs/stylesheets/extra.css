@@ -3,7 +3,27 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-:root  > * {
-    --md-primary-fg-color:        #0081E1;
+/* Accent = nav current-page highlight, links, buttons (unchanged) */
+:root > * {
     --md-accent-fg-color:         #0081E1;
+    --md-primary-fg-color:        #0081E1;
+}
+
+/* Top bar only: background and text (does not affect nav current-page highlight) */
+.md-header {
+    --md-primary-bg-color:        #FFFFFF;
+    --md-primary-fg-color:        #1F2128;
+}
+
+/* Target the logo image within the header navigation */
+.md-header img,
+.md-header__button.md-logo img {
+    height: 40px; /* Adjust height as needed */
+    width: auto;  /* Maintain aspect ratio */
+}
+
+/* Target the logo in the drawer navigation (for mobile views) */
+.md-nav__button.md-logo img {
+    height: 40px; /* Adjust height as needed */
+    width: auto;  /* Maintain aspect ratio */
 }
