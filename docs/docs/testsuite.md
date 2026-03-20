@@ -38,7 +38,7 @@ Using the `production-test-framework` container will automate a lot of the manag
 
 ### Shared fixtures
 
-The `grafana_url` fixture is defined in `tests/suites/conftest.py` and is used by both the profiler OTEL and Grafana dashboards suites. It uses `GRAFANA_HOST` and `GRAFANA_PORT` (default: `http://localhost:3000`).
+Any fixtures that need to be used across multiple test suites should be placed in `tests/suites/conftest.py`.
 
 ### Profiler OTEL `conftest.py`
 
@@ -140,13 +140,13 @@ The Grafana dashboards test suite validates that the dashboards in the repositor
 
 ### What is tested
 
-1. **YAML vs folder**: Every `*.json` file in `deployments/dashboards` is listed in `dashboards.yml` (no dashboard file is left out of provisioning).
+1. **dashboards.yml versus repository files**: Every `options.path` entry in `dashboards.yml` must point to a JSON file that exists under `deployments/dashboards/` in the repository (same basename). The path must be exactly `/var/lib/grafana/dashboards/<filename>.json`, matching the Docker Compose mount of `deployments/dashboards` to that location in the Grafana container, so the listed path resolves to the intended file. Duplicate basenames across providers are rejected.
 2. **Dashboard presence in Grafana**: The dashboards listed in `dashboards.yml` are available in Grafana
 3. **Each dashboard loads**: For each dashboard returned by Grafana’s search API, the dashboard UID API returns HTTP 200.
 
 ### Requirements
 
-- Grafana (LGTM stack) must be running. When running via `make test`, the production-test-framework container mounts the repo’s `deployments/dashboards` directory at `/mnt/dashboards` so the tests can read `dashboards.yml` and the list of JSON files.
+- Grafana (LGTM stack) must be running. When running via `make test`, the production-test-framework container mounts the repo’s `deployments/dashboards` directory at `/mnt/dashboards` so the tests can read `dashboards.yml` and verify repo files match the provisioning paths.
 - The suite uses the same Grafana URL as the profiler OTEL suite (`GRAFANA_HOST`, `GRAFANA_PORT`; default `http://localhost:3000`).
 
 ### Environment variables

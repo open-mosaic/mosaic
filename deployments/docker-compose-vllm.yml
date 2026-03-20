@@ -13,6 +13,7 @@ services:
     environment:
       - NCCL_PROFILER_OTEL_TELEMETRY_ENDPOINT=http://172.17.0.1:4318
       - VLLM_LOGGING_LEVEL=DEBUG
+      - NCCL_P2P_DISABLE=1
     deploy:
       resources:
         reservations:

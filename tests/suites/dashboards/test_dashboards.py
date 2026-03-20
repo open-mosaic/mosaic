@@ -3,8 +3,8 @@
 """
 Tests for Grafana dashboards provisioning and availability.
 
-Validates that dashboards in deployments/dashboards are listed in dashboards.yml
-and are available and loadable in Grafana.
+Validates that dashboards.yml references real repo files and that dashboards
+in Grafana match provisioning.
 """
 
 from pathlib import Path
@@ -12,6 +12,9 @@ from typing import Any
 
 import pytest
 import requests
+
+# Container parent directory for options.path in dashboards.yml (compose mount target).
+_PROVISIONING_DIR = Path("/var/lib/grafana/dashboards")
 
 
 # =============================================================================
@@ -26,27 +29,60 @@ class TestGrafanaDashboards:
     def test_dashboard_json_files_listed_in_yml(
         self,
         dashboards_dir: str,
-        dashboard_json_files: list[str],
-        expected_dashboard_filenames: set[str],
+        dashboards_yml_provisioning_paths: list[str],
     ):
         """
-        :title: Provisioning - All dashboard JSON files listed in dashboards.yml
+        :title: Provisioning - dashboards.yml paths exist in the repo
         :suite: dashboards
-        :description: Every *.json file in the dashboards directory is declared
-            in dashboards.yml so that no dashboard is left out of provisioning.
+        :description: Every path listed in dashboards.yml must exist as a JSON file
+            in the dashboards directory, and must use the intended container path
+            (/var/lib/grafana/dashboards/<file>.json) so it resolves to that file
+            when the stack mounts deployments/dashboards there.
         """
-        if not dashboard_json_files:
+        if not dashboards_yml_provisioning_paths:
             pytest.fail(
-                f"No dashboard JSON files found in {dashboards_dir} "
+                f"No dashboard paths found in dashboards.yml under {dashboards_dir} "
                 "(is DASHBOARDS_DIR set and the directory mounted?)"
             )
-        missing = [
-            f for f in dashboard_json_files if f not in expected_dashboard_filenames
-        ]
-        assert not missing, (
-            f"Dashboard JSON file(s) not listed in dashboards.yml: {missing}. "
-            "Add a provider with options.path pointing to each file."
-        )
+        if not Path(dashboards_dir).is_dir():
+            pytest.fail(f"Dashboards directory does not exist: {dashboards_dir}")
+
+        errors: list[str] = []
+        seen_basenames: set[str] = set()
+        for path_str in dashboards_yml_provisioning_paths:
+            path_obj = Path(path_str)
+            basename = path_obj.name
+
+            if path_obj.suffix != ".json":
+                errors.append(f"{path_str!r}: expected a .json file")
+                continue
+
+            # Path in YAML must be the Grafana container mount point + basename
+            # (no subdirectories), matching deployments/docker-compose.yml.
+            try:
+                if path_obj.parent != _PROVISIONING_DIR:
+                    errors.append(
+                        f"{path_str!r}: parent must be {_PROVISIONING_DIR} "
+                        f"(got {path_obj.parent})"
+                    )
+                    continue
+            except ValueError:
+                errors.append(f"{path_str!r}: invalid path")
+                continue
+
+            if basename in seen_basenames:
+                errors.append(f"{path_str!r}: duplicate basename {basename!r}")
+                continue
+            seen_basenames.add(basename)
+
+            repo_file = Path(dashboards_dir) / basename
+            if not repo_file.is_file():
+                errors.append(
+                    f"{path_str!r}: repo file missing at {repo_file} "
+                    "(path must resolve to this file)"
+                )
+
+        assert not errors, "dashboards.yml provisioning errors:\n" + "\n".join(errors)
 
     def test_grafana_dashboard_availability_matches_expected(
         self,
@@ -66,32 +102,29 @@ class TestGrafanaDashboards:
             )
 
         dashboard_list_url = f"{grafana_url}/apis/dashboard.grafana.app/v1beta1/namespaces/default/dashboards"
-        dashboard_list = []
-        params = {}
+        dashboard_list: list[str] = []
+        params: dict[str, str] = {}
 
-        # Get the list of dashboards from Grafana until all expected dashboards are found
         while True:
             try:
                 response = requests.get(dashboard_list_url, params=params, timeout=10)
                 if response.status_code == 200:
                     dashboards_json = response.json()
-                    dashboards = self._dashboard_list_from_json(dashboards_json)
+                    dashboard_list.extend(self._dashboard_list_from_json(dashboards_json))
 
                     if more_dashboards := self._more_dashboards_available(dashboards_json):
                         params.update(more_dashboards)
                     else:
                         break
-                    dashboards += dashboards
-
                 else:
                     pytest.fail(f"Grafana dashboard list API failed at {grafana_url}")
 
             except requests.exceptions.RequestException:
                 pytest.fail(f"Grafana not accessible at {grafana_url}")
-        
+
         # Verify that all expected dashboards are in the list
         for dashboard in expected_dashboard_filenames:
-            assert dashboard in dashboards, f"Grafana is missing expected dashboard: {dashboard}"
+            assert dashboard in dashboard_list, f"Grafana is missing expected dashboard: {dashboard}"
 
     def test_each_dashboard_loads(
         self,
