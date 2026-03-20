@@ -149,7 +149,7 @@ class TestGrafanaDashboards:
             pytest.fail(f"Grafana not accessible at {grafana_url}")
 
         if not dashboards:
-            return
+            pytest.fail(f"No dashboards found in Grafana at {grafana_url}")
 
         failed = []
         for dashboard in dashboards:
