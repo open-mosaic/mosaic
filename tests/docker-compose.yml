@@ -24,8 +24,11 @@ services:
       - ../deployments/dashboards:/mnt/dashboards:ro
       - test-results:/app/results
     depends_on:
-      - mosaic-vllm
-      - otel-lgtm
+      mosaic-vllm:
+        condition: service_started
+    
+      otel-lgtm:
+          condition: service_healthy
     restart: "no"
 
 volumes:

@@ -17,7 +17,7 @@ FRAMEWORK_CONTAINER_NAME ?= production-test-framework
 
 setup:
 	@echo "Starting container stack..."
-	@docker compose up -d
+	@docker compose up -d --pull always
 
 cleanup:
 	@echo "Cleaning up container stack..."
