@@ -36,14 +36,18 @@ Using the `production-test-framework` container will automate a lot of the manag
 
 ## Test Structure
 
-### `conftest.py`
+### Shared fixtures
 
-Provides fixtures and constants for the tests:
+The `grafana_url` fixture is defined in `tests/suites/conftest.py` and is used by both the profiler OTEL and Grafana dashboards suites. It uses `GRAFANA_HOST` and `GRAFANA_PORT` (default: `http://localhost:3000`).
+
+### Profiler OTEL `conftest.py`
+
+Provides fixtures and constants for the profiler OTEL tests:
 
 | Fixture | Description |
 |---------|-------------|
 | `prometheus_url` | Prometheus API endpoint (default: `http://localhost:9090`) |
-| `grafana_url` | Grafana endpoint (default: `http://localhost:3000`) |
+| `grafana_url` | Grafana endpoint (shared; default: `http://localhost:3000`) |
 | `vllm_client` | Client for vLLM inference API |
 | `vllm_ready` | Waits for vLLM to be healthy |
 | `inference_completed` | Runs inference to trigger NCCL operations |
@@ -127,3 +131,26 @@ P2P metrics require pipeline parallelism. Modify `docker-compose.yml`:
 ```yaml
 command: ["vllm serve ... --pipeline-parallel-size 2"]
 ```
+
+---
+
+## Grafana Dashboards Tests Suite
+
+The Grafana dashboards test suite validates that the dashboards in the repository stay in sync with the running Grafana instance. It does not require vLLM or GPUs.
+
+### What is tested
+
+1. **YAML vs folder**: Every `*.json` file in `deployments/dashboards` is listed in `dashboards.yml` (no dashboard file is left out of provisioning).
+2. **Dashboard presence in Grafana**: The dashboards listed in `dashboards.yml` are available in Grafana
+3. **Each dashboard loads**: For each dashboard returned by Grafana’s search API, the dashboard UID API returns HTTP 200.
+
+### Requirements
+
+- Grafana (LGTM stack) must be running. When running via `make test`, the production-test-framework container mounts the repo’s `deployments/dashboards` directory at `/mnt/dashboards` so the tests can read `dashboards.yml` and the list of JSON files.
+- The suite uses the same Grafana URL as the profiler OTEL suite (`GRAFANA_HOST`, `GRAFANA_PORT`; default `http://localhost:3000`).
+
+### Environment variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DASHBOARDS_DIR` | `/mnt/dashboards` | Path to the dashboards directory (set by mount when run in container) |

@@ -29,8 +29,6 @@ VLLM_READY_TIMEOUT = 300  # 5 minutes for model download and loading
 # Default OTEL stack configuration
 DEFAULT_PROMETHEUS_HOST = "localhost"
 DEFAULT_PROMETHEUS_PORT = 9090
-DEFAULT_GRAFANA_HOST = "localhost"
-DEFAULT_GRAFANA_PORT = 3000
 
 # All NCCL profiler metrics defined in telemetry.cc initializeOtelMetrics()
 # Prometheus-transformed metric names from telemetry.cc initializeOtelMetrics()
@@ -91,16 +89,6 @@ def prometheus_url() -> str:
     """
     host = os.getenv("PROMETHEUS_HOST", DEFAULT_PROMETHEUS_HOST)
     port = os.getenv("PROMETHEUS_PORT", str(DEFAULT_PROMETHEUS_PORT))
-    return f"http://{host}:{port}"
-
-
-@pytest.fixture(scope="session")
-def grafana_url() -> str:
-    """
-    Provide the Grafana URL.
-    """
-    host = os.getenv("GRAFANA_HOST", DEFAULT_GRAFANA_HOST)
-    port = os.getenv("GRAFANA_PORT", str(DEFAULT_GRAFANA_PORT))
     return f"http://{host}:{port}"
 
 
