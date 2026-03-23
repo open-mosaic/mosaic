@@ -35,10 +35,10 @@ services:
     restart: always
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
-      interval: 10s
-      timeout: 10s
+      interval: 5s
+      timeout: 5s
       retries: 6
-      start_period: 60s
+      start_period: 30s
 
   pipeline-analyzer:
     # Uncommit it to build the image locally
