@@ -20,7 +20,7 @@ services:
       - TEST_MARKER="profiler_otel or dashboards"
     network_mode: "host"
     volumes:
-      - ./suites:/app/tests:ro
+      - ./suites:/app/framework/tests:ro
       - ../deployments/dashboards:/mnt/dashboards:ro
       - test-results:/app/results
     depends_on:

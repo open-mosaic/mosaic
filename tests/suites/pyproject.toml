@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: 2025 Delos Data Inc
+# SPDX-License-Identifier: Apache-2.0
+[project]
+name = "mosaic-tests"
+version = "0.1.0"
+description = "Mosaic integration test suite"
+requires-python = ">=3.14"
+dependencies = []
+
+pythonpath = ["."]
+testpaths = ["."]
+python_files = "test_*.py"
+python_functions = "test_*"
