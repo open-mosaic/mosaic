@@ -13,6 +13,7 @@ jobs:
     name: Run Integration Tests
     runs-on: [self-hosted, gpu-integration]
     permissions:
+      actions: read
       checks: write
       contents: read
     defaults:
@@ -42,3 +43,59 @@ jobs:
           artifact: integration-test-results
           path: "**/test_results.xml"
           reporter: java-junit
+
+      - name: Check previous workflow run state
+        if: always()
+        id: previous_run
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const workflow_id = "integration-tests.yml";
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id,
+              per_page: 2,
+            });
+            const runs = data.workflow_runs;
+            const priorRun =
+              runs[0]?.id === context.runId
+                ? runs[1]
+                : runs.find((r) => r.id !== context.runId);
+            const priorRunFailed =
+              priorRun?.status === "completed" &&
+              priorRun.conclusion === "failure";
+            core.setOutput("post_failure_slack", priorRunFailed ? "false" : "true");
+            core.setOutput("recovered", priorRunFailed ? "true" : "false");
+
+      - name: Post failure to Slack
+        if: failure() && steps.previous_run.outputs.post_failure_slack == 'true'
+        uses: slackapi/slack-github-action@v3.0.1
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            text: "*Integration tests failed*"
+            attachments:
+              - color: danger
+                blocks:
+                  - type: section
+                    text:
+                      type: mrkdwn
+                      text: "*Integration tests failed*\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run> — `${{ github.repository }}`"
+
+      - name: Post recovery to Slack
+        if: success() && steps.previous_run.outputs.recovered == 'true'
+        uses: slackapi/slack-github-action@v3.0.1
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            text: "*Integration tests recovered* — ${{ github.repository }}"
+            attachments:
+              - color: good
+                blocks:
+                  - type: section
+                    text:
+                      type: mrkdwn
+                      text: "*Integration tests recovered* (previous run failed)\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run> — `${{ github.repository }}`"
