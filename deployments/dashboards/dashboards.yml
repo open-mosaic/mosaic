@@ -62,3 +62,10 @@ providers:
     options:
       path: /var/lib/grafana/dashboards/node_exporter_infiniband.json
       foldersFromFilesStructure: false
+  - name: "vLLM - Disaggregated Inference"
+    type: file
+    orgId: 1
+    folder: "Mosaic"
+    options:
+      path: /var/lib/grafana/dashboards/disaggregated.json
+      foldersFromFilesStructure: false
