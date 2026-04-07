@@ -26,7 +26,7 @@ cleanup:
 	&& docker container prune -f
 
 run-tests:
-	docker compose run --rm --name $(FRAMEWORK_CONTAINER_NAME) $(FRAMEWORK_SERVICE_NAME) 
+	docker compose run --name $(FRAMEWORK_CONTAINER_NAME) $(FRAMEWORK_SERVICE_NAME) 
 
 copy-test-results:
 	rm -rf $(RESULTS_DIR)
