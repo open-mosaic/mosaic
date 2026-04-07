@@ -12,7 +12,7 @@ import pytest
 import requests
 
 from framework.vllm import InferenceResult
-
+from framework.workload.workload import WorkloadStatus
 
 # =============================================================================
 # NCCL Profiler Telemetry Tests
@@ -71,9 +71,15 @@ class TestNCCLProfilerTelemetry:
 
         pytest.skip(f"Grafana not accessible at {grafana_url}")
 
+    @pytest.mark.parametrize(
+        "workload",
+        ["prompt_workload", "inferencex_workload"],
+        indirect=True,
+        ids=["prompt_workload", "inferencex_workload"],
+    )
     def test_nccl_metrics_exported_after_inference(
         self,
-        inference_completed: InferenceResult,
+        workload,
         prometheus_url: str,
         nccl_profiler_metrics: list[str],
     ):
@@ -84,10 +90,31 @@ class TestNCCLProfilerTelemetry:
             running vLLM inference. Triggers NCCL operations via inference, then
             queries Prometheus for all metrics defined in telemetry.cc.
         """
-        assert len(inference_completed.text) > 0, "Inference must succeed before checking metrics"
 
-        end_time = time.time()
-        start_time = end_time - 60.0
+        workload.start()
+
+        # wait for workload to complete
+        workload.wait_for_completion(timeout=600)
+
+        # get inference result
+        workload_result = workload.get_result()
+
+        print("Workload result:")
+        match workload_result.result:
+            case str():
+                print(workload_result.result)
+            case InferenceResult():
+                print(f"  Generated {len(workload_result.result.text)} characters")
+                print(f"  Usage: {workload_result.result.usage}")
+                print(f"  Text: {workload_result.result.text}")
+
+        print(f"  Workload runtime: {workload_result.runtime:.1f}s")
+
+        assert workload_result is not None and workload_result.status == WorkloadStatus.COMPLETED, "Inference must succeed before checking metrics"
+    
+
+        # The metrics results take about 10 seconds to become available in Prometheus.
+        time.sleep(10)
 
         found_metrics = []
         missing_metrics = []
@@ -96,7 +123,7 @@ class TestNCCLProfilerTelemetry:
             try:
                 response = requests.get(
                     f"{prometheus_url}/api/v1/query_range",
-                    params={"query": metric_name, "start": start_time, "end": end_time, "step": "1.0"},
+                    params={"query": metric_name, "start": workload_result.start_time, "end": workload_result.end_time, "step": "1.0"},
                     timeout=10,
                 )
                 if response.status_code == 200:
