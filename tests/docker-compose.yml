@@ -23,10 +23,10 @@ services:
       - ./suites:/app/framework/tests:ro
       - ../deployments/dashboards:/mnt/dashboards:ro
       - test-results:/app/results
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       mosaic-vllm:
-        condition: service_started
-    
+        condition: service_healthy
       otel-lgtm:
           condition: service_healthy
     restart: "no"

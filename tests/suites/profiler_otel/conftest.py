@@ -12,6 +12,8 @@ import time
 import pytest
 
 from framework.vllm import VllmClient, VllmConfig, InferenceResult
+from framework.workload.prompt_workload import PromptWorkload
+from framework.workload.inferencex_workload import InferencexWorkload
 
 
 # =============================================================================
@@ -126,34 +128,27 @@ def vllm_ready(vllm_client: VllmClient) -> bool:
     return True
 
 
-# =============================================================================
-# Inference Fixture
-# =============================================================================
 
 
 @pytest.fixture(scope="session")
-def inference_completed(vllm_ready: bool, vllm_client: VllmClient) -> InferenceResult:
+def prompt_workload():
     """
-    Run vLLM inference and return the result.
+    Provide a prompt workload.
     """
-    print("\n\n\n==============================================\n\n\n")
-    print(f"\n  Running inference with prompt: '{PROMPT}...'")
+    return PromptWorkload(prompt=PROMPT)
 
-    result = vllm_client.complete(prompt=PROMPT)
 
-    if not result.success:
-        pytest.fail(f"Inference failed: {result.error}")
+@pytest.fixture(scope="session")
+def inferencex_workload():
+    """
+    Provide an inferencex workload.
+    """
+    return InferencexWorkload()
 
-    print(f"  Inference completed in {result.response_time:.1f}s")
-    print(f"  Generated {len(result.text)} characters")
-    print(f"  Usage: {result.usage}")
 
-    print(f"  Text: {result.text}")
-
-    print("\n\n\n==============================================\n\n\n")
-
-    # Wait for metrics to be exported (OTEL export interval is typically 5-10s)
-    print("  Waiting for metrics export...")
-    time.sleep(10)
-
-    return result
+@pytest.fixture
+def workload(request):
+    """
+    Dispatch to ``prompt_workload`` or ``inferencex_workload`` via indirect parametrization.
+    """
+    return request.getfixturevalue(request.param)
