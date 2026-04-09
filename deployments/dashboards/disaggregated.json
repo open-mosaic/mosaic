@@ -719,19 +719,19 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "rate(vllm:request_prefill_time_seconds_sum{job=\"vllm-prefill\"}[$__rate_interval])/\nrate(vllm:request_prefill_time_seconds_count{job=\"vllm-prefill\"}[$__rate_interval])",
+          "expr": "rate(vllm:request_prefill_time_seconds_sum{}[$__rate_interval])/\nrate(vllm:request_prefill_time_seconds_count{}[$__rate_interval])",
           "hide": false,
           "interval": "10s",
-          "legendFormat": "{{host}}",
+          "legendFormat": "{{host}}-P",
           "range": true,
           "refId": "B"
         },
         {
           "editorMode": "code",
-          "expr": "rate(vllm:request_decode_time_seconds_sum{job=\"vllm-decode\"}[$__rate_interval])/\nrate(vllm:request_decode_time_seconds_count{job=\"vllm-decode\"}[$__rate_interval])",
+          "expr": "rate(vllm:request_decode_time_seconds_sum{}[$__rate_interval])/\nrate(vllm:request_decode_time_seconds_count{}[$__rate_interval])",
           "hide": false,
           "interval": "10s",
-          "legendFormat": "{{host}}",
+          "legendFormat": "{{host}}-D",
           "range": true,
           "refId": "A"
         }
@@ -825,10 +825,10 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum by (host) (rate(vllm:request_prompt_tokens_sum{job=\"vllm-prefill\"}[$__rate_interval]))",
+          "expr": "sum by (host) (rate(vllm:request_prompt_tokens_sum{}[$__rate_interval]))",
           "hide": false,
           "interval": "10s",
-          "legendFormat": "{{host}}",
+          "legendFormat": "{{host}}-I",
           "range": true,
           "refId": "A"
         },
@@ -838,11 +838,11 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (host) (rate(vllm:generation_tokens_total{job=\"vllm-decode\"}[$__rate_interval]))",
+          "expr": "sum by (host) (rate(vllm:generation_tokens_total{}[$__rate_interval]))",
           "hide": false,
           "instant": false,
           "interval": "10s",
-          "legendFormat": "__auto",
+          "legendFormat": "{{host}}-O",
           "range": true,
           "refId": "C"
         }
@@ -1280,5 +1280,5 @@
   "timezone": "browser",
   "title": "vLLM - Disaggregated Inference",
   "uid": "adxhzf7",
-  "version": 1
+  "version": 2
 }
