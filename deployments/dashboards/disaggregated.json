@@ -411,7 +411,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum by (host) (DCGM_FI_DEV_GPU_UTIL)",
+          "expr": "avg by (host) (DCGM_FI_DEV_GPU_UTIL)",
           "hide": false,
           "interval": "10s",
           "legendFormat": "__auto",
