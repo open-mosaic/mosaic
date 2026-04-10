@@ -5,6 +5,8 @@
 
 # To build:
 #   docker build -t openmosaic/mosaic-vllm:dev -f Dockerfile .
+# CUDA 13.0 base (vllm/vllm-openai:*-cu130):
+#   docker build -t openmosaic/mosaic-vllm:cu130 --build-arg VLLM_BASE_TAG=v0.19.0-cu130 -f Dockerfile .
 # To build with specific NCCL tag:
 #   docker build -t openmosaic/mosaic-vllm:dev --build-arg NCCL_TAG=<nccl-tag> -f Dockerfile .
 # To run:
@@ -12,11 +14,12 @@
 
 ARG NCCL_TAG=2.29.2-1
 ARG OTEL_CPP_VERSION=v1.25.0
+ARG VLLM_BASE_TAG=v0.19.0
 
 # =============================================================================
 # vLLM base + build OTel, NCCL, plugin + install Ray
 # =============================================================================
-FROM vllm/vllm-openai:v0.15.0 AS builder
+FROM vllm/vllm-openai:${VLLM_BASE_TAG} AS builder
 ARG NCCL_TAG
 ARG OTEL_CPP_VERSION
 
@@ -65,9 +68,10 @@ ENV OTEL_PATH=/tmp/opentelemetry-build
 COPY . /tmp/nccl-profiler-otel-plugin/
 RUN cd /tmp/nccl-profiler-otel-plugin && /bin/bash -lc 'make clean && make TRACE=1 NCCL_PATH=/tmp/nccl'
 
-FROM vllm/vllm-openai:v0.15.0 AS runner
+FROM vllm/vllm-openai:${VLLM_BASE_TAG} AS runner
 ARG NCCL_TAG
 ARG OTEL_CPP_VERSION
+ARG VLLM_BASE_TAG
 
 # --- Upgrade pip ---
 RUN pip install --upgrade pip
@@ -113,3 +117,4 @@ LABEL org.opencontainers.image.source="https://github.com/open-mosaic/mosaic"
 LABEL org.opencontainers.image.revision="${GIT_HASH}"
 LABEL ai.openmosaic.image.nccl.version="${NCCL_TAG}"
 LABEL ai.openmosaic.image.otel.version="${OTEL_CPP_VERSION}"
+LABEL ai.openmosaic.image.vllm.base="${VLLM_BASE_TAG}"
