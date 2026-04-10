@@ -48,20 +48,32 @@ jobs:
               - '.github/workflows/nccl-profiler-plugin-container.yml'
               - '.github/trivy.yaml'
 
+  # PRs: builds default vLLM base only
+  # Push to main, tags, workflow_dispatch, workflow_call: build both vLLM base (default + cu130).
+  build-matrix:
+    name: Build matrix
+    runs-on: ubuntu-latest
+    permissions: read-all
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    steps:
+      - name: Set build matrix
+        id: set
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo 'matrix={"include":[{"vllm_base_tag":"v0.19.0","tag_extra":""}]}' >> $GITHUB_OUTPUT
+          else
+            echo 'matrix={"include":[{"vllm_base_tag":"v0.19.0","tag_extra":""},{"vllm_base_tag":"v0.19.0-cu130","tag_extra":"-cu130"}]}' >> $GITHUB_OUTPUT
+          fi
+
   build-container:
     name: Build and Scan Profiler (${{ matrix.vllm_base_tag }})
-    needs: check-paths
+    needs: [check-paths, build-matrix]
     if: inputs.force_build == true || github.event_name == 'workflow_dispatch' || needs.check-paths.outputs.nccl-profiler-container == 'true'
     runs-on: ubuntu-latest-m
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          # Default registry tags (:sha, :latest, release) use the non-cu130 vLLM base; cu130 uses -cu130 suffix.
-          - vllm_base_tag: v0.19.0
-            tag_extra: ''
-          - vllm_base_tag: v0.19.0-cu130
-            tag_extra: '-cu130'
+      matrix: ${{ fromJSON(needs.build-matrix.outputs.matrix) }}
 
     steps:
       - name: Checkout repository
