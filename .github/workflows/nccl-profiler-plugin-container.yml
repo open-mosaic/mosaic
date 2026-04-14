@@ -61,13 +61,13 @@ jobs:
         id: set
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo 'matrix={"include":[{"vllm_base_tag":"v0.19.0","tag_extra":""}]}' >> $GITHUB_OUTPUT
+            echo 'matrix={"include":[{"vllm_base_tag":"v0.19.0","tag_suffix":""}]}' >> $GITHUB_OUTPUT
           else
-            echo 'matrix={"include":[{"vllm_base_tag":"v0.19.0","tag_extra":""},{"vllm_base_tag":"v0.19.0-cu130","tag_extra":"-cu130"}]}' >> $GITHUB_OUTPUT
+            echo 'matrix={"include":[{"vllm_base_tag":"v0.19.0","tag_suffix":""},{"vllm_base_tag":"v0.19.0-cu130","tag_suffix":"-cu130"}]}' >> $GITHUB_OUTPUT
           fi
 
   build-container:
-    name: Build and Scan Profiler (${{ matrix.vllm_base_tag }})
+    name: Build and Scan Profiler ${{ matrix.tag_suffix }}
     needs: [check-paths, build-matrix]
     if: inputs.force_build == true || github.event_name == 'workflow_dispatch' || needs.check-paths.outputs.nccl-profiler-container == 'true'
     runs-on: ubuntu-latest-m
@@ -102,9 +102,9 @@ jobs:
           # Load image to local Docker so Trivy can scan it when not pushing.
           load: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
           tags: |
-            ${{ vars.DOCKERHUB_REPO || 'local' }}/mosaic-vllm:${{ steps.short-sha.outputs.sha }}${{ matrix.tag_extra }}
-            ${{ (github.ref == 'refs/heads/main' && format('{0}/mosaic-vllm:latest{1}', vars.DOCKERHUB_REPO || 'local', matrix.tag_extra)) || '' }}
-            ${{ (startsWith(github.ref, 'refs/tags/') && format('{0}/mosaic-vllm:{1}{2}', vars.DOCKERHUB_REPO || 'local', github.ref_name, matrix.tag_extra)) || '' }}
+            ${{ vars.DOCKERHUB_REPO || 'local' }}/mosaic-vllm:${{ steps.short-sha.outputs.sha }}${{ matrix.tag_suffix }}
+            ${{ (github.ref == 'refs/heads/main' && format('{0}/mosaic-vllm:latest{1}', vars.DOCKERHUB_REPO || 'local', matrix.tag_suffix)) || '' }}
+            ${{ (startsWith(github.ref, 'refs/tags/') && format('{0}/mosaic-vllm:{1}{2}', vars.DOCKERHUB_REPO || 'local', github.ref_name, matrix.tag_suffix)) || '' }}
           build-args: |
             GIT_HASH=${{ github.sha }}
             VLLM_BASE_TAG=${{ matrix.vllm_base_tag }}
@@ -116,6 +116,6 @@ jobs:
         if: (github.event_name != 'pull_request' && github.event_name != 'workflow_dispatch') || !contains(github.event.pull_request.labels.*.name, 'skip-trivy')
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ${{ vars.DOCKERHUB_REPO || 'local' }}/mosaic-vllm:${{ steps.short-sha.outputs.sha }}${{ matrix.tag_extra }}
+          image-ref: ${{ vars.DOCKERHUB_REPO || 'local' }}/mosaic-vllm:${{ steps.short-sha.outputs.sha }}${{ matrix.tag_suffix }}
           trivy-config: .github/trivy.yaml
           trivyignores: .github/.trivyignore
