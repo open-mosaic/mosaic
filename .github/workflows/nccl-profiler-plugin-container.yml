@@ -48,11 +48,32 @@ jobs:
               - '.github/workflows/nccl-profiler-plugin-container.yml'
               - '.github/trivy.yaml'
 
+  # PRs: builds default vLLM base only
+  # Push to main, tags, workflow_dispatch, workflow_call: build both vLLM base (default + cu130).
+  build-matrix:
+    name: Build matrix
+    runs-on: ubuntu-latest
+    permissions: read-all
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    steps:
+      - name: Set build matrix
+        id: set
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo 'matrix={"include":[{"vllm_base_tag":"v0.19.0","tag_suffix":""}]}' >> $GITHUB_OUTPUT
+          else
+            echo 'matrix={"include":[{"vllm_base_tag":"v0.19.0","tag_suffix":""},{"vllm_base_tag":"v0.19.0-cu130","tag_suffix":"-cu130"}]}' >> $GITHUB_OUTPUT
+          fi
+
   build-container:
-    name: Build and Scan Profiler Plugin Container
-    needs: check-paths
+    name: Build and Scan Profiler Container ${{ matrix.tag_suffix }}
+    needs: [check-paths, build-matrix]
     if: inputs.force_build == true || github.event_name == 'workflow_dispatch' || needs.check-paths.outputs.nccl-profiler-container == 'true'
     runs-on: ubuntu-latest-m
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.build-matrix.outputs.matrix) }}
 
     steps:
       - name: Checkout repository
@@ -81,19 +102,20 @@ jobs:
           # Load image to local Docker so Trivy can scan it when not pushing.
           load: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
           tags: |
-            ${{ vars.DOCKERHUB_REPO || 'local' }}/mosaic-vllm:${{ steps.short-sha.outputs.sha }}
-            ${{ (github.ref == 'refs/heads/main' && format('{0}/mosaic-vllm:latest', vars.DOCKERHUB_REPO || 'local')) || '' }}
-            ${{ (startsWith(github.ref, 'refs/tags/') && format('{0}/mosaic-vllm:{1}', vars.DOCKERHUB_REPO || 'local', github.ref_name)) || '' }}
+            ${{ vars.DOCKERHUB_REPO || 'local' }}/mosaic-vllm:${{ steps.short-sha.outputs.sha }}${{ matrix.tag_suffix }}
+            ${{ (github.ref == 'refs/heads/main' && format('{0}/mosaic-vllm:latest{1}', vars.DOCKERHUB_REPO || 'local', matrix.tag_suffix)) || '' }}
+            ${{ (startsWith(github.ref, 'refs/tags/') && format('{0}/mosaic-vllm:{1}{2}', vars.DOCKERHUB_REPO || 'local', github.ref_name, matrix.tag_suffix)) || '' }}
           build-args: |
             GIT_HASH=${{ github.sha }}
-          cache-from: type=gha
+            VLLM_BASE_TAG=${{ matrix.vllm_base_tag }}
+          cache-from: type=gha,scope=mosaic-vllm-${{ matrix.vllm_base_tag }}
           # Only push cache on main to avoid filling GHA cache on PRs/other branches
-          cache-to: ${{ github.ref == 'refs/heads/main' && 'type=gha,mode=max' || '' }}
+          cache-to: ${{ github.ref == 'refs/heads/main' && format('type=gha,mode=max,scope=mosaic-vllm-{0}', matrix.vllm_base_tag) || '' }}
 
       - name: Run Trivy vulnerability scanner
         if: (github.event_name != 'pull_request' && github.event_name != 'workflow_dispatch') || !contains(github.event.pull_request.labels.*.name, 'skip-trivy')
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ${{ vars.DOCKERHUB_REPO || 'local' }}/mosaic-vllm:${{ steps.short-sha.outputs.sha }}
+          image-ref: ${{ vars.DOCKERHUB_REPO || 'local' }}/mosaic-vllm:${{ steps.short-sha.outputs.sha }}${{ matrix.tag_suffix }}
           trivy-config: .github/trivy.yaml
           trivyignores: .github/.trivyignore
