@@ -67,7 +67,7 @@ jobs:
           fi
 
   build-container:
-    name: Build and Scan Profiler ${{ matrix.tag_suffix }}
+    name: Build and Scan Profiler Container ${{ matrix.tag_suffix }}
     needs: [check-paths, build-matrix]
     if: inputs.force_build == true || github.event_name == 'workflow_dispatch' || needs.check-paths.outputs.nccl-profiler-container == 'true'
     runs-on: ubuntu-latest-m
