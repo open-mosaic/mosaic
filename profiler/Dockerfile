@@ -84,7 +84,7 @@ RUN pip install --upgrade protobuf==6.33.5
 
 # --- Manually install cryptography and pillow to avoid CVE-2026-26007, CVE-2026-25990 ---
 # FIXME: Remove this once components are updated to the latest version
-RUN pip install cryptography==46.0.5 pillow==12.1.1
+RUN pip install cryptography==46.0.5 pillow==12.2.0
 
 # --- Install Ray (Python) ---
 RUN pip install "ray[default]==2.54.0"
