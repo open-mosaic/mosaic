@@ -67,7 +67,9 @@ jobs:
           fi
 
   build-container:
-    name: Build and Scan Profiler Container ${{ matrix.tag_suffix }}
+    # Static name: matrix is not available when the job is skipped, so ${{ matrix.* }} here
+    # would show literally in the Checks UI and break required-status matching.
+    name: Build and Scan Profiler Container
     needs: [check-paths, build-matrix]
     if: inputs.force_build == true || github.event_name == 'workflow_dispatch' || needs.check-paths.outputs.nccl-profiler-container == 'true'
     runs-on: ubuntu-latest-m
