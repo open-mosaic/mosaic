@@ -5,7 +5,10 @@ name: Integration Tests
 
 on:
   schedule:
-    - cron: "0 * * * *"
+    - cron: "0 7 * * *"
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
@@ -24,6 +27,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Prune Docker resources (scheduled runs only)
+        if: github.event_name == 'schedule'
+        run: docker system prune --all --force
+
       - name: Run integration tests
         run: echo "HOME=$HOME" >> $GITHUB_ENV && make cleanup && make test
 
@@ -40,8 +47,7 @@ jobs:
         uses: dorny/test-reporter@v2.5.0
         with:
           name: Integration Test Results
-          artifact: integration-test-results
-          path: "**/test_results.xml"
+          path: ${{ env.HOME }}/tmp/mosaic/test_results.xml
           reporter: java-junit
 
       - name: Check previous workflow run state
