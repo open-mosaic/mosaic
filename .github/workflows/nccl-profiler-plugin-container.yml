@@ -67,7 +67,7 @@ jobs:
           fi
 
   build-container:
-    name: Build and Scan Profiler Container ${{ matrix.tag_suffix }}
+    name: Build and Scan Profiler Container
     needs: [check-paths, build-matrix]
     if: inputs.force_build == true || github.event_name == 'workflow_dispatch' || needs.check-paths.outputs.nccl-profiler-container == 'true'
     runs-on: ubuntu-latest-m
@@ -119,3 +119,22 @@ jobs:
           image-ref: ${{ vars.DOCKERHUB_REPO || 'local' }}/mosaic-vllm:${{ steps.short-sha.outputs.sha }}${{ matrix.tag_suffix }}
           trivy-config: .github/trivy.yaml
           trivyignores: .github/.trivyignore
+
+  # Always run so branch protection always sees a result, even when
+  # build-container was skipped (no relevant file change)
+  build-complete:
+    name: Build and Scan Profiler Container Complete
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [build-container]
+    steps:
+      - name: Check build results
+        run: |
+          result='${{ needs.build-container.result }}'
+          if [ "$result" = "success" ] || [ "$result" = "skipped" ]; then
+            echo "Build result: $result — OK"
+            exit 0
+          else
+            echo "Build result: $result — FAILED"
+            exit 1
+          fi
