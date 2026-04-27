@@ -9,6 +9,7 @@
 #include <chrono>
 #include <map>
 #include <memory>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -118,6 +119,64 @@ static nostd::unique_ptr<metrics_api::Histogram<double>> g_transferSizeHist;
 static nostd::unique_ptr<metrics_api::Histogram<double>> g_transferTimeHist;
 static nostd::unique_ptr<metrics_api::Histogram<double>> g_transferLatencyHist;
 
+// =======================================================================================
+// Generic Primer Infrastructure for Collective, P2P, Rank, and Transfer metrics
+// =======================================================================================
+
+/**
+ * @brief Primer state for a metric key.
+ */
+enum class PrimerState : uint8_t
+{
+    PENDING_PRIMER,               // New key detected, accumulating data, waiting for scale_up_exec_mode to stabilize
+    PRIMER_EMITTED_AWAITING_REAL  // Primer (zeros) emitted, waiting to export real data on next window
+};
+
+// Number of windows to wait after scale_up_exec_mode becomes NON_CUDA_GRAPH before emitting primer.
+// This allows time for the NON_CUDA_GRAPH → CUDA_GRAPH transition during model warmup/graph capture.
+// Note: CUDA_GRAPH is the final stable state and can be emitted immediately (no transition back).
+// Note: Despite the "scale_up" name, this mode applies to ALL communicators (scale-up and scale-out).
+#define PRIMER_STABILIZATION_WINDOWS 2
+
+// Maximum total windows to wait before forcing primer emission (even if scale_up_exec_mode is still UNKNOWN)
+// This prevents primers from waiting indefinitely if mode detection fails or is unsupported.
+// Default: 10 windows (~50 seconds at 5s/window)
+#define PRIMER_MAX_WAIT_WINDOWS 10
+
+/**
+ * @brief Generic primer data structure for any metric type.
+ *
+ * @tparam T The aggregated metric type (AggregatedCollective, AggregatedP2P, AggregatedTransfer)
+ */
+template <typename T>
+struct PrimerData
+{
+    T aggregatedData;        // Accumulated metric data across windows
+    PrimerState state;       // Current primer state
+    uint32_t windowsWaited;  // Number of windows we've waited for mode to stabilize
+
+    PrimerData() : aggregatedData(), state(PrimerState::PENDING_PRIMER), windowsWaited(0) {}
+};
+
+/**
+ * @brief Primer key: (CommunicatorState*, operation_key_string)
+ */
+using PrimerKey = std::pair<CommunicatorState*, std::string>;
+
+// Primer storage for each metric type
+static std::map<PrimerKey, PrimerData<AggregatedCollective>> g_collectivePrimers;
+static std::map<PrimerKey, PrimerData<AggregatedP2P>> g_p2pPrimers;
+static std::map<PrimerKey, PrimerData<AggregatedTransfer>> g_rankPrimers;
+static std::map<PrimerKey, PrimerData<AggregatedTransfer>> g_transferPrimers;
+
+// Track keys that have completed the primer cycle (to avoid re-priming on subsequent windows)
+static std::set<PrimerKey> g_collectivePrimersDone;
+static std::set<PrimerKey> g_p2pPrimersDone;
+static std::set<PrimerKey> g_rankPrimersDone;
+static std::set<PrimerKey> g_transferPrimersDone;
+
+static pthread_mutex_t g_primerLock = PTHREAD_MUTEX_INITIALIZER;
+
 /**
  * @brief Initialize OpenTelemetry metrics and instruments.
  *
@@ -215,12 +274,80 @@ static void initializeOtelMetrics()
     OTEL_TRACE(NCCL_INIT, "<== initializeOtelMetrics()");
 }
 
+// =======================================================================================
+// Helper Functions for Primer Algorithm
+// =======================================================================================
+
+/**
+ * @brief Merge two AggregatedCollective structures.
+ */
+static AggregatedCollective mergeAggregatedCollective(const AggregatedCollective& a, const AggregatedCollective& b)
+{
+    AggregatedCollective merged;
+    merged.totalBytes                = a.totalBytes + b.totalBytes;
+    merged.totalTimeUs               = a.totalTimeUs + b.totalTimeUs;
+    merged.count                     = a.count + b.count;
+    merged.cachedTotalTransferCount  = a.cachedTotalTransferCount + b.cachedTotalTransferCount;
+    merged.cachedTotalTransferBytes  = a.cachedTotalTransferBytes + b.cachedTotalTransferBytes;
+    merged.cachedTotalTransferTimeUs = a.cachedTotalTransferTimeUs + b.cachedTotalTransferTimeUs;
+    return merged;
+}
+
+/**
+ * @brief Merge two AggregatedP2P structures.
+ */
+static AggregatedP2P mergeAggregatedP2P(const AggregatedP2P& a, const AggregatedP2P& b)
+{
+    AggregatedP2P merged;
+    merged.totalBytes                = a.totalBytes + b.totalBytes;
+    merged.totalTimeUs               = a.totalTimeUs + b.totalTimeUs;
+    merged.count                     = a.count + b.count;
+    merged.cachedTotalTransferCount  = a.cachedTotalTransferCount + b.cachedTotalTransferCount;
+    merged.cachedTotalTransferBytes  = a.cachedTotalTransferBytes + b.cachedTotalTransferBytes;
+    merged.cachedTotalTransferTimeUs = a.cachedTotalTransferTimeUs + b.cachedTotalTransferTimeUs;
+    return merged;
+}
+
+/**
+ * @brief Merge two AggregatedTransfer structures.
+ */
+static AggregatedTransfer mergeAggregatedTransfer(const AggregatedTransfer& a, const AggregatedTransfer& b)
+{
+    AggregatedTransfer merged;
+    merged.totalBytes  = a.totalBytes + b.totalBytes;
+    merged.totalTimeUs = a.totalTimeUs + b.totalTimeUs;
+    merged.count       = a.count + b.count;
+
+    // Merge linear regression data using the built-in merge method
+    merged.lr = a.lr;
+    merged.lr.merge(b.lr);
+
+    // Merge transfer intervals
+    merged.intervals = a.intervals;
+    merged.intervals.insert(merged.intervals.end(), b.intervals.begin(), b.intervals.end());
+
+    return merged;
+}
+
+/**
+ * @brief Check if scale_up_exec_mode is known (not UNKNOWN).
+ */
+static bool isScaleUpExecModeKnown(CommunicatorState* commState)
+{
+    auto mode =
+        static_cast<CommunicatorState::ScaleUpExecMode>(commState->scaleUpExecMode.load(std::memory_order_acquire));
+    return mode != CommunicatorState::ScaleUpExecMode::UNKNOWN;
+}
+
 /**
  * @brief Export collective operation metrics to OpenTelemetry.
  *
  * Exports aggregated collective metrics including bytes, time, transfer counts,
  * transfer sizes, and transfer times. All metrics include communicator, rank,
  * hostname, and local_rank labels.
+ *
+ * When is_primer is true, exports 0 values for all metrics to establish the Prometheus
+ * time series. When is_primer is false, exports actual aggregated statistics.
  *
  * @param[in] key Aggregation key in format: Comm<hash>_<func>_<algo>_<proto>_<nChannels>Chnl
  * @param[in] coll Aggregated collective data containing statistics.
@@ -232,84 +359,92 @@ static void initializeOtelMetrics()
  * @param[in] gpu_uuid GPU UUID.
  * @param[in] comm_type Communicator type string (tensor_parallel, pipeline_parallel, unknown).
  * @param[in] nranks Number of ranks in the communicator.
+ * @param[in] scale_up_exec_mode Scale-up execution mode (cuda_graph, non_cuda_graph, or unknown).
+ * @param[in] is_primer If true, exports 0 values (primer); if false, exports actual aggregated values.
  */
 static void exportCollectiveMetrics(const std::string& key, const AggregatedCollective& coll, int rank,
                                     const std::string& hostname, int local_rank, uint64_t comm_hash,
                                     const std::string& gpu_pci_bus_id, const std::string& gpu_uuid,
-                                    const std::string& comm_type, int nranks, const std::string& scale_up_exec_mode)
+                                    const std::string& comm_type, int nranks, const std::string& scale_up_exec_mode,
+                                    bool is_primer)
 {
-    // Parse key to extract collective name, algo, proto, nChannels
-    // Key format: Comm<hash>_<func>_<algo>_<proto>_<nChannels>Chnl
     std::string rank_str       = std::to_string(rank);
     std::string local_rank_str = std::to_string(local_rank);
     std::string communicator   = std::to_string(comm_hash);
-    std::string coll_name      = key;
-    std::string nchannels      = "unknown";
 
-    // Parse the key (simplified for now - should be enhanced)
-    size_t last_underscore = key.rfind('_');
-    if (last_underscore != std::string::npos)
+    std::map<std::string, std::string> labels = {
+        {"communicator",       communicator          },
+        {"operation",          key                   },
+        {"rank",               rank_str              },
+        {"hostname",           hostname              },
+        {"local_rank",         local_rank_str        },
+        {"gpu_pci_bus_id",     gpu_pci_bus_id        },
+        {"gpu_uuid",           gpu_uuid              },
+        {"comm_type",          comm_type             },
+        {"comm_nranks",        std::to_string(nranks)},
+        {"scale_up_exec_mode", scale_up_exec_mode    }
+    };
+
+    auto ctx = opentelemetry::context::Context{};
+
+    // Export bytes (counter for real, 0 for primer)
+    size_t bytesValue = is_primer ? 0 : coll.totalBytes;
+    g_collBytesCounter->Add(bytesValue, labels, ctx);
+
+    // Export time, count, and transfer stats
+    double avgTime    = is_primer ? 0.0 : coll.getAverageTime();
+    double countValue = is_primer ? 0.0 : (double)coll.count;
+
+    g_collTimeHist->Record(avgTime, labels, ctx);
+    g_collCountHist->Record(countValue, labels, ctx);
+
+    // Calculate transfer statistics
+    double avgNumTransfers = is_primer ? 0.0 : coll.getAverageTransferCount();
+    double avgTransferSize = is_primer ? 0.0 : coll.getAverageTransferSize();
+    double avgTransferTime = is_primer ? 0.0 : coll.getAverageTransferTime();
+
+    g_collNumTransfersHist->Record(avgNumTransfers, labels, ctx);
+    g_collTransferSizeHist->Record(avgTransferSize, labels, ctx);
+
+    // Only export transfer time if the real data would have it
+    // (CUDA-graph scale-up volume-only paths leave cachedTotalTransferTimeUs at 0)
+    if (coll.cachedTotalTransferTimeUs > 0.0)
     {
-        coll_name = key.substr(0, last_underscore);
-        nchannels = key.substr(last_underscore + 1);
-    }
+        g_collTransferTimeHist->Record(avgTransferTime, labels, ctx);
 
-    // Export collective bytes and time
-    if (coll.count > 0)
-    {
-        double avgTime = coll.getAverageTime();
-
-        OTEL_TRACE(
-            NCCL_INIT,
-            "Exporting Collective: %s, count=%u, totalBytes=%zu, totalTime=%.2f us -> AvgBytes=%.2f, AvgTime=%.2f us",
-            key.c_str(), coll.count, coll.totalBytes, coll.totalTimeUs, coll.getAverageSize(), avgTime);
-
-        // Create attributes for labeling
-        std::map<std::string, std::string> labels = {
-            {"communicator",       communicator          },
-            {"operation",          key                   },
-            {"rank",               rank_str              },
-            {"hostname",           hostname              },
-            {"local_rank",         local_rank_str        },
-            {"gpu_pci_bus_id",     gpu_pci_bus_id        },
-            {"gpu_uuid",           gpu_uuid              },
-            {"comm_type",          comm_type             },
-            {"comm_nranks",        std::to_string(nranks)},
-            {"scale_up_exec_mode", scale_up_exec_mode    }
-        };
-
-        g_collBytesCounter->Add(coll.totalBytes, labels, opentelemetry::context::Context{});
-        g_collTimeHist->Record(avgTime, labels, opentelemetry::context::Context{});
-        g_collCountHist->Record((double)coll.count, labels, opentelemetry::context::Context{});
-
-        // Export transfer statistics (from underlying proxy operations or scale-up inference)
-        double avgNumTransfers = coll.getAverageTransferCount();
-        double avgTransferSize = coll.getAverageTransferSize();
-        double avgTransferTime = coll.getAverageTransferTime();
-
-        if (avgNumTransfers > 0)
+        if (is_primer)
         {
-            g_collNumTransfersHist->Record(avgNumTransfers, labels, opentelemetry::context::Context{});
-            g_collTransferSizeHist->Record(avgTransferSize, labels, opentelemetry::context::Context{});
-            // Only export transfer time when aggregation produced real timing data.
-            // CUDA-graph scale-up volume-only paths intentionally leave this at 0,
-            // while scale-out proxy paths still carry actual ProxyStep timing even
-            // if the communicator is tagged as cuda_graph.
-            if (coll.cachedTotalTransferTimeUs > 0.0)
-            {
-                g_collTransferTimeHist->Record(avgTransferTime, labels, opentelemetry::context::Context{});
-            }
-
+            OTEL_TRACE(NCCL_INIT, "Collective PRIMER: %s (all zeros, including avgTransferTime, scale_up_exec_mode=%s)",
+                       key.c_str(), scale_up_exec_mode.c_str());
+        }
+        else if (avgNumTransfers > 0)
+        {
             OTEL_TRACE(NCCL_INIT,
                        "Exported Collective: %s, AvgBytes: %.2f, AvgTime: %.2f us, "
                        "AvgNumTransfers: %.2f, AvgTransferSize: %.2f, AvgTransferTime: %.2f us",
                        key.c_str(), coll.getAverageSize(), avgTime, avgNumTransfers, avgTransferSize, avgTransferTime);
         }
-        else
+    }
+    else
+    {
+        if (is_primer)
         {
-            OTEL_TRACE(NCCL_INIT, "Exported Collective: %s, AvgBytes: %.2f, AvgTime: %.2f us (no transfers)",
+            OTEL_TRACE(NCCL_INIT,
+                       "Collective PRIMER: %s (all zeros, avgTransferTime OMITTED - will be 0 in real data, "
+                       "scale_up_exec_mode=%s)",
+                       key.c_str(), scale_up_exec_mode.c_str());
+        }
+        else if (avgNumTransfers > 0)
+        {
+            OTEL_TRACE(NCCL_INIT, "Exported Collective: %s, AvgBytes: %.2f, AvgTime: %.2f us (no transfer timing)",
                        key.c_str(), coll.getAverageSize(), avgTime);
         }
+    }
+
+    if (!is_primer && avgNumTransfers == 0)
+    {
+        OTEL_TRACE(NCCL_INIT, "Exported Collective: %s, AvgBytes: %.2f, AvgTime: %.2f us (no transfers)", key.c_str(),
+                   coll.getAverageSize(), avgTime);
     }
 }
 
@@ -331,18 +466,40 @@ static void exportCollectiveMetrics(const std::string& key, const AggregatedColl
  * @param[in] comm_type Communicator type string (tensor_parallel, pipeline_parallel, unknown).
  * @param[in] nranks Number of ranks in the communicator.
  */
+/**
+ * @brief Export P2P operation metrics to OpenTelemetry.
+ *
+ * Exports aggregated P2P metrics including bytes, time, transfer counts,
+ * transfer sizes, and transfer times. All metrics include communicator, rank,
+ * hostname, and local_rank labels.
+ *
+ * When is_primer is true, exports 0 values for all metrics to establish the Prometheus
+ * time series. When is_primer is false, exports actual aggregated statistics.
+ *
+ * @param[in] key Aggregation key in format: Comm<hash>_<func>_Rank<X>ToRank<Y>_<nChannels>Chnl
+ * @param[in] p2p Aggregated P2P data containing statistics.
+ * @param[in] rank Global rank of the process.
+ * @param[in] hostname Hostname of the node.
+ * @param[in] local_rank Local rank within the node.
+ * @param[in] comm_hash Communicator hash for labeling.
+ * @param[in] gpu_pci_bus_id GPU PCI BUS ID.
+ * @param[in] gpu_uuid GPU UUID.
+ * @param[in] comm_type Communicator type string (tensor_parallel, pipeline_parallel, unknown).
+ * @param[in] nranks Number of ranks in the communicator.
+ * @param[in] scale_up_exec_mode Scale-up execution mode (cuda_graph, non_cuda_graph, or unknown).
+ * @param[in] is_primer If true, exports 0 values (primer); if false, exports actual aggregated values.
+ */
 static void exportP2PMetrics(const std::string& key, const AggregatedP2P& p2p, int rank, const std::string& hostname,
                              int local_rank, uint64_t comm_hash, const std::string& gpu_pci_bus_id,
                              const std::string& gpu_uuid, const std::string& comm_type, int nranks,
-                             const std::string& scale_up_exec_mode)
+                             const std::string& scale_up_exec_mode, bool is_primer)
 {
-    // Parse key to extract function name and pipeline info
-    // P2P Key format: Comm<hash>_(<hostname>)_<func>_Pipeline<src>ToPipeline<dst>_<nChannels>Chnl
     std::string rank_str       = std::to_string(rank);
     std::string local_rank_str = std::to_string(local_rank);
     std::string communicator   = std::to_string(comm_hash);
 
     // Extract function name (Send/Recv) and pipeline info from key
+    // P2P Key format: Comm<hash>_(<hostname>)_<func>_Pipeline<src>ToPipeline<dst>_<nChannels>Chnl
     std::string func_name    = "P2P";
     std::string src_pipeline = "";
     std::string dst_pipeline = "";
@@ -374,60 +531,82 @@ static void exportP2PMetrics(const std::string& key, const AggregatedP2P& p2p, i
             {
                 dst_pipeline = key.substr(dst_start, dst_end - dst_start);
             }
-            else
-            {
-                dst_pipeline = key.substr(dst_start);
-            }
         }
     }
 
     // Build operation label with rank info from local_rank
-    // local_rank is now correctly set from the GPU ID → rank map (populated by COLLECTIVE comms)
     std::string rank_info = " (Rank" + local_rank_str + ")";
     std::string operation = func_name + " Pipeline" + src_pipeline + "→Pipeline" + dst_pipeline + rank_info;
 
-    // Export P2P bytes and time
-    if (p2p.count > 0)
+    std::map<std::string, std::string> labels = {
+        {"communicator",       communicator          },
+        {"operation",          operation             },
+        {"rank",               rank_str              },
+        {"hostname",           hostname              },
+        {"local_rank",         local_rank_str        },
+        {"gpu_pci_bus_id",     gpu_pci_bus_id        },
+        {"gpu_uuid",           gpu_uuid              },
+        {"comm_type",          comm_type             },
+        {"comm_nranks",        std::to_string(nranks)},
+        {"scale_up_exec_mode", scale_up_exec_mode    }
+    };
+
+    auto ctx = opentelemetry::context::Context{};
+
+    // Calculate values (0 for primer, actual for real data)
+    double avgBytes = is_primer ? 0.0 : ((double)p2p.totalBytes / p2p.count);
+    double avgTime  = is_primer ? 0.0 : (p2p.totalTimeUs / p2p.count);
+
+    g_p2pBytesHist->Record(avgBytes, labels, ctx);
+    g_p2pTimeHist->Record(avgTime, labels, ctx);
+
+    // Export transfer statistics
+    double avgNumTransfers = is_primer ? 0.0 : p2p.getAverageTransferCount();
+    double avgTransferSize = is_primer ? 0.0 : p2p.getAverageTransferSize();
+    double avgTransferTime = is_primer ? 0.0 : p2p.getAverageTransferTime();
+
+    // Only export transfer metrics if real data will have them
+    if (avgNumTransfers > 0 || (is_primer && p2p.getAverageTransferCount() > 0))
     {
-        double avgBytes = (double)p2p.totalBytes / p2p.count;
-        double avgTime  = p2p.totalTimeUs / p2p.count;
+        g_p2pNumTransfersHist->Record(avgNumTransfers, labels, ctx);
+        g_p2pTransferSizeHist->Record(avgTransferSize, labels, ctx);
 
-        // Create attributes for labeling
-        std::map<std::string, std::string> labels = {
-            {"communicator",       communicator          },
-            {"operation",          operation             },
-            {"rank",               rank_str              },
-            {"hostname",           hostname              },
-            {"local_rank",         local_rank_str        },
-            {"gpu_pci_bus_id",     gpu_pci_bus_id        },
-            {"gpu_uuid",           gpu_uuid              },
-            {"comm_type",          comm_type             },
-            {"comm_nranks",        std::to_string(nranks)},
-            {"scale_up_exec_mode", scale_up_exec_mode    }
-        };
-
-        g_p2pBytesHist->Record(avgBytes, labels, opentelemetry::context::Context{});
-        g_p2pTimeHist->Record(avgTime, labels, opentelemetry::context::Context{});
-
-        // Export transfer statistics (from underlying proxy operations)
-        double avgNumTransfers = p2p.getAverageTransferCount();
-        double avgTransferSize = p2p.getAverageTransferSize();
-        double avgTransferTime = p2p.getAverageTransferTime();
-
-        if (avgNumTransfers > 0)
+        if (p2p.cachedTotalTransferTimeUs > 0.0)
         {
-            g_p2pNumTransfersHist->Record(avgNumTransfers, labels, opentelemetry::context::Context{});
-            g_p2pTransferSizeHist->Record(avgTransferSize, labels, opentelemetry::context::Context{});
-            // Same policy as collectives: suppress only when no timing data exists.
-            if (p2p.cachedTotalTransferTimeUs > 0.0)
-            {
-                g_p2pTransferTimeHist->Record(avgTransferTime, labels, opentelemetry::context::Context{});
-            }
+            g_p2pTransferTimeHist->Record(avgTransferTime, labels, ctx);
 
-            OTEL_TRACE(NCCL_INIT,
-                       "Exported P2P: %s, AvgBytes: %.2f, AvgTime: %.2f us, "
-                       "AvgNumTransfers: %.2f, AvgTransferSize: %.2f, AvgTransferTime: %.2f us",
-                       key.c_str(), avgBytes, avgTime, avgNumTransfers, avgTransferSize, avgTransferTime);
+            if (is_primer)
+            {
+                OTEL_TRACE(NCCL_INIT, "P2P PRIMER: %s (all zeros, including transfer metrics)", key.c_str());
+            }
+            else
+            {
+                OTEL_TRACE(NCCL_INIT,
+                           "Exported P2P: %s, AvgBytes: %.2f, AvgTime: %.2f us, "
+                           "AvgNumTransfers: %.2f, AvgTransferSize: %.2f, AvgTransferTime: %.2f us",
+                           key.c_str(), avgBytes, avgTime, avgNumTransfers, avgTransferSize, avgTransferTime);
+            }
+        }
+        else
+        {
+            if (is_primer)
+            {
+                OTEL_TRACE(NCCL_INIT, "P2P PRIMER: %s (all zeros, transfer metrics WITHOUT time)", key.c_str());
+            }
+            else
+            {
+                OTEL_TRACE(NCCL_INIT,
+                           "Exported P2P: %s, AvgBytes: %.2f, AvgTime: %.2f us, "
+                           "AvgNumTransfers: %.2f, AvgTransferSize: %.2f (no transfer timing)",
+                           key.c_str(), avgBytes, avgTime, avgNumTransfers, avgTransferSize);
+            }
+        }
+    }
+    else
+    {
+        if (is_primer)
+        {
+            OTEL_TRACE(NCCL_INIT, "P2P PRIMER: %s (basic metrics only, no transfer details)", key.c_str());
         }
         else
         {
@@ -451,6 +630,10 @@ static void exportP2PMetrics(const std::string& key, const AggregatedP2P& p2p, i
  *
  * Metrics include communicator, source_rank, dest_rank, and hostname labels.
  *
+ * When is_primer is true, exports 0 values for all metrics to establish the Prometheus
+ * time series. When is_primer is false, exports actual aggregated statistics. Note that
+ * latency and rate are only exported if available (requires sufficient data for calculation).
+ *
  * @param[in] key Aggregation key in format: Comm<hash>_Rank<X>ToRank<Y>
  * @param[in] transferRef Aggregated transfer data containing statistics.
  * @param[in] rank Global rank of the process (unused, extracted from key).
@@ -459,20 +642,21 @@ static void exportP2PMetrics(const std::string& key, const AggregatedP2P& p2p, i
  * @param[in] gpu_uuid GPU UUID.
  * @param[in] comm_type Communicator type string (tensor_parallel, pipeline_parallel, unknown).
  * @param[in] nranks Number of ranks in the communicator.
+ * @param[in] local_rank Local rank within the node.
+ * @param[in] scale_up_exec_mode Scale-up execution mode (cuda_graph, non_cuda_graph, or unknown).
+ * @param[in] is_primer If true, exports 0 values (primer); if false, exports actual aggregated values.
  */
 static void exportRankMetrics(const std::string& key, const AggregatedTransfer& transferRef, int rank,
                               const std::string& hostname, const std::string& gpu_pci_bus_id,
                               const std::string& gpu_uuid, const std::string& comm_type, int nranks, int local_rank,
-                              const std::string& scale_up_exec_mode)
+                              const std::string& scale_up_exec_mode, bool is_primer)
 {
     (void)rank;  // Unused - rank info is parsed from key or derived from local_rank
     std::string communicator = "";
     std::string source_rank  = "";
     std::string dest_rank    = "";
 
-    // Parse key based on format:
-    // P2P: Comm<hash>_<hostname>_Pipeline<src>_ToPipeline<peer>
-    // COLLECTIVE: Comm<hash>_Rank<X>_ToPeer<peer>
+    // Parse key
     size_t comm_pos     = key.find("Comm");
     size_t first_sep    = key.find("_", comm_pos + 4);
     size_t pipeline_pos = key.find("_Pipeline");
@@ -485,22 +669,18 @@ static void exportRankMetrics(const std::string& key, const AggregatedTransfer& 
 
     if (pipeline_pos != std::string::npos && peer_pos == std::string::npos)
     {
-        // P2P format: Parse Pipeline<src>_ToPipeline<dst>
-        // Include the actual GPU rank (local_rank) for clarity
-        size_t src_start = pipeline_pos + 9;  // After "_Pipeline"
+        size_t src_start = pipeline_pos + 9;
         size_t to_pos    = key.find("_ToPipeline", src_start);
         if (to_pos != std::string::npos)
         {
             std::string src_pipeline = key.substr(src_start, to_pos - src_start);
             std::string dst_pipeline = key.substr(to_pos + 11);
-            // Format: "Pipeline0 (Rank5)" to show both pipeline and GPU rank
-            source_rank = "Pipeline" + src_pipeline + " (Rank" + std::to_string(local_rank) + ")";
-            dest_rank   = "Pipeline" + dst_pipeline;
+            source_rank              = "Pipeline" + src_pipeline + " (Rank" + std::to_string(local_rank) + ")";
+            dest_rank                = "Pipeline" + dst_pipeline;
         }
     }
     else if (peer_pos != std::string::npos)
     {
-        // COLLECTIVE format: parse source rank from key
         size_t rank_pos = key.find("_Rank");
         if (rank_pos != std::string::npos)
         {
@@ -509,7 +689,6 @@ static void exportRankMetrics(const std::string& key, const AggregatedTransfer& 
         dest_rank = key.substr(peer_pos + 7);
     }
 
-    // Create attributes for labeling
     std::map<std::string, std::string> labels = {
         {"communicator",       communicator              },
         {"source_rank",        source_rank               },
@@ -523,28 +702,60 @@ static void exportRankMetrics(const std::string& key, const AggregatedTransfer& 
         {"scale_up_exec_mode", scale_up_exec_mode        }
     };
 
-    // Export rank bytes
-    g_rankBytesCounter->Add(transferRef.totalBytes, labels, opentelemetry::context::Context{});
+    auto ctx = opentelemetry::context::Context{};
 
-    // Export rank latency (from linear regression)
+    // Export bytes
+    size_t bytesValue = is_primer ? 0 : transferRef.totalBytes;
+    g_rankBytesCounter->Add(bytesValue, labels, ctx);
+
+    // Export latency (if available)
     double latencyUs;
-    if (transferRef.getLatencyFromLinearRegression(latencyUs))
+    bool hasLatency = transferRef.getLatencyFromLinearRegression(latencyUs);
+    if (hasLatency)
     {
-        g_rankLatencyHist->Record(latencyUs, labels, opentelemetry::context::Context{});
-        OTEL_TRACE(NCCL_INIT, "Exported Rank Latency: %s, Latency: %.2f us", key.c_str(), latencyUs);
+        double latencyValue = is_primer ? 0.0 : latencyUs;
+        g_rankLatencyHist->Record(latencyValue, labels, ctx);
+        if (!is_primer)
+        {
+            OTEL_TRACE(NCCL_INIT, "Exported Rank Latency: %s, Latency: %.2f us", key.c_str(), latencyUs);
+        }
     }
 
-    // Export rank rate (from active transfer time - merged intervals)
-    // This represents the actual bandwidth between ranks by measuring total bytes
-    // transferred divided by the time during which at least one transfer was active.
+    // Export rate (if available)
     double rateMBps;
-    if (transferRef.getRateFromActiveTime(rateMBps))
+    bool hasRate = transferRef.getRateFromActiveTime(rateMBps);
+    if (hasRate)
     {
-        g_rankRateHist->Record(rateMBps, labels, opentelemetry::context::Context{});
-        OTEL_TRACE(NCCL_INIT, "Exported Rank Rate: %s, Bytes: %zu, ActiveTime: %.2f us, Rate: %.2f MB/s", key.c_str(),
-                   transferRef.totalBytes, transferRef.getActiveTime(), rateMBps);
+        double rateValue = is_primer ? 0.0 : rateMBps;
+        g_rankRateHist->Record(rateValue, labels, ctx);
+        if (!is_primer)
+        {
+            OTEL_TRACE(NCCL_INIT, "Exported Rank Rate: %s, Bytes: %zu, ActiveTime: %.2f us, Rate: %.2f MB/s",
+                       key.c_str(), transferRef.totalBytes, transferRef.getActiveTime(), rateMBps);
+        }
     }
-    else
+
+    // Log summary
+    if (is_primer)
+    {
+        if (hasLatency && hasRate)
+        {
+            OTEL_TRACE(NCCL_INIT, "Rank PRIMER: %s (all zeros, including latency and rate)", key.c_str());
+        }
+        else if (hasLatency)
+        {
+            OTEL_TRACE(NCCL_INIT, "Rank PRIMER: %s (all zeros, including latency, rate OMITTED)", key.c_str());
+        }
+        else if (hasRate)
+        {
+            OTEL_TRACE(NCCL_INIT, "Rank PRIMER: %s (all zeros, including rate, latency OMITTED)", key.c_str());
+        }
+        else
+        {
+            OTEL_TRACE(NCCL_INIT, "Rank PRIMER: %s (bytes only, latency and rate OMITTED)", key.c_str());
+        }
+    }
+    else if (!hasRate)
     {
         OTEL_TRACE(NCCL_INIT, "Exported Rank Metrics: %s, Bytes: %zu (no rate data)", key.c_str(),
                    transferRef.totalBytes);
@@ -567,10 +778,34 @@ static void exportRankMetrics(const std::string& key, const AggregatedTransfer& 
  * @param[in] comm_type Communicator type string (tensor_parallel, pipeline_parallel, unknown).
  * @param[in] nranks Number of ranks in the communicator.
  */
+/**
+ * @brief Export per-channel transfer metrics to OpenTelemetry.
+ *
+ * Exports aggregated transfer metrics per communicator, rank pair, and channel
+ * including average transfer size, average transfer time, and latency (from
+ * linear regression). Metrics include communicator, source_rank, dest_rank, channel,
+ * and hostname labels.
+ *
+ * When is_primer is true, exports 0 values for all metrics to establish the Prometheus
+ * time series. When is_primer is false, exports actual aggregated statistics. Note that
+ * latency and time are only exported if available (requires sufficient data for calculation).
+ *
+ * @param[in] key Aggregation key in format: Comm<hash>_Rank<X>ToRank<Y>_Chnl<channelId>
+ * @param[in] transferRef Aggregated transfer data containing statistics.
+ * @param[in] rank Global rank of the process (unused, extracted from key).
+ * @param[in] hostname Hostname of the node.
+ * @param[in] gpu_pci_bus_id GPU PCI BUS ID.
+ * @param[in] gpu_uuid GPU UUID.
+ * @param[in] comm_type Communicator type string (tensor_parallel, pipeline_parallel, unknown).
+ * @param[in] nranks Number of ranks in the communicator.
+ * @param[in] local_rank Local rank within the node.
+ * @param[in] scale_up_exec_mode Scale-up execution mode (cuda_graph, non_cuda_graph, or unknown).
+ * @param[in] is_primer If true, exports 0 values (primer); if false, exports actual aggregated values.
+ */
 static void exportTransferMetrics(const std::string& key, const AggregatedTransfer& transferRef, int rank,
                                   const std::string& hostname, const std::string& gpu_pci_bus_id,
                                   const std::string& gpu_uuid, const std::string& comm_type, int nranks, int local_rank,
-                                  const std::string& scale_up_exec_mode)
+                                  const std::string& scale_up_exec_mode, bool is_primer)
 {
     (void)rank;  // Unused - rank info is parsed from key or derived from local_rank
     std::string communicator = "";
@@ -578,9 +813,7 @@ static void exportTransferMetrics(const std::string& key, const AggregatedTransf
     std::string dest_rank    = "";
     std::string channel      = "";
 
-    // Parse key based on format:
-    // P2P: Comm<hash>_<hostname>_Pipeline<src>_ToPipeline<peer>_Chnl<id>
-    // COLLECTIVE: Comm<hash>_Rank<X>_ToPeer<peer>_Chnl<id>
+    // Parse key
     size_t comm_pos     = key.find("Comm");
     size_t first_sep    = key.find("_", comm_pos + 4);
     size_t pipeline_pos = key.find("_Pipeline");
@@ -594,9 +827,7 @@ static void exportTransferMetrics(const std::string& key, const AggregatedTransf
 
     if (pipeline_pos != std::string::npos && peer_pos == std::string::npos)
     {
-        // P2P format: Parse Pipeline<src>_ToPipeline<dst>
-        // Include the actual GPU rank (local_rank) for clarity
-        size_t src_start = pipeline_pos + 9;  // After "_Pipeline"
+        size_t src_start = pipeline_pos + 9;
         size_t to_pos    = key.find("_ToPipeline", src_start);
         if (to_pos != std::string::npos)
         {
@@ -610,14 +841,12 @@ static void exportTransferMetrics(const std::string& key, const AggregatedTransf
             {
                 dst_pipeline = key.substr(to_pos + 11);
             }
-            // Format: "Pipeline0 (Rank5)" to show both pipeline and GPU rank
             source_rank = "Pipeline" + src_pipeline + " (Rank" + std::to_string(local_rank) + ")";
             dest_rank   = "Pipeline" + dst_pipeline;
         }
     }
     else if (peer_pos != std::string::npos)
     {
-        // COLLECTIVE format: ranks within communicator
         size_t rank_pos = key.find("_Rank");
         if (rank_pos != std::string::npos)
         {
@@ -634,12 +863,9 @@ static void exportTransferMetrics(const std::string& key, const AggregatedTransf
         channel = key.substr(chnl_pos + 5);
     }
 
-    if (transferRef.count > 0)
+    // Only export if we have actual transfer data OR if this is a primer
+    if (transferRef.count > 0 || is_primer)
     {
-        double avgSize = transferRef.getAverageSize();
-        double avgTime = transferRef.getAverageTime();
-
-        // Create attributes for labeling
         std::map<std::string, std::string> labels = {
             {"communicator",       communicator              },
             {"source_rank",        source_rank               },
@@ -654,27 +880,63 @@ static void exportTransferMetrics(const std::string& key, const AggregatedTransf
             {"scale_up_exec_mode", scale_up_exec_mode        }
         };
 
-        g_transferSizeHist->Record(avgSize, labels, opentelemetry::context::Context{});
-        if (transferRef.totalTimeUs > 0.0)
+        auto ctx = opentelemetry::context::Context{};
+
+        // Export size
+        double avgSize = is_primer ? 0.0 : transferRef.getAverageSize();
+        g_transferSizeHist->Record(avgSize, labels, ctx);
+
+        // Export time if available
+        bool hasTime = (transferRef.totalTimeUs > 0.0);
+        if (hasTime)
         {
-            g_transferTimeHist->Record(avgTime, labels, opentelemetry::context::Context{});
+            double avgTime = is_primer ? 0.0 : transferRef.getAverageTime();
+            g_transferTimeHist->Record(avgTime, labels, ctx);
         }
 
-        // Export transfer latency (from linear regression)
+        // Export latency if available (requires linear regression)
         double latencyUs;
-        if (transferRef.getLatencyFromLinearRegression(latencyUs))
+        bool hasLatency = transferRef.getLatencyFromLinearRegression(latencyUs);
+        if (hasLatency)
         {
-            g_transferLatencyHist->Record(latencyUs, labels, opentelemetry::context::Context{});
+            double latencyValue = is_primer ? 0.0 : latencyUs;
+            g_transferLatencyHist->Record(latencyValue, labels, ctx);
 
-            OTEL_TRACE(NCCL_INIT, "Exported Transfer: %s, AvgSize: %.2f, AvgTime: %.2f us, Latency: %.2f us",
-                       key.c_str(), avgSize, avgTime, latencyUs);
+            if (!is_primer)
+            {
+                double avgTime = transferRef.getAverageTime();
+                OTEL_TRACE(NCCL_INIT, "Exported Transfer: %s, AvgSize: %.2f, AvgTime: %.2f us, Latency: %.2f us",
+                           key.c_str(), avgSize, avgTime, latencyUs);
+            }
         }
-        else
+        else if (!is_primer)
         {
+            double avgTime = transferRef.getAverageTime();
             OTEL_TRACE(NCCL_INIT, "Exported Transfer: %s, AvgSize: %.2f, AvgTime: %.2f us", key.c_str(), avgSize,
                        avgTime);
         }
-    }
+
+        // Log primer summary
+        if (is_primer)
+        {
+            if (hasLatency && hasTime)
+            {
+                OTEL_TRACE(NCCL_INIT, "Transfer PRIMER: %s (all zeros, including latency and time)", key.c_str());
+            }
+            else if (hasLatency)
+            {
+                OTEL_TRACE(NCCL_INIT, "Transfer PRIMER: %s (all zeros, including latency, time OMITTED)", key.c_str());
+            }
+            else if (hasTime)
+            {
+                OTEL_TRACE(NCCL_INIT, "Transfer PRIMER: %s (all zeros, including time, latency OMITTED)", key.c_str());
+            }
+            else
+            {
+                OTEL_TRACE(NCCL_INIT, "Transfer PRIMER: %s (size only, latency and time OMITTED)", key.c_str());
+            }
+        }
+    }  // End: if (transferRef.count > 0 || is_primer)
 }
 
 /**
@@ -727,42 +989,634 @@ static void processWindow(CommunicatorState* commState, int window_idx)
     // Finalize aggregation - calculates correct Coll/P2P durations based on ProxyOp completion
     aggregator.finalize();
 
-    // Export Collective Information
+    const bool scaleUpModeKnown = isScaleUpExecModeKnown(commState);
+
+    // Use primer algorithm to fix issues with:
+    // 1. Metrics completing within single window (Grafana sees no change)
+    // 2. scale_up_exec_mode changing from UNKNOWN causing duplicate label series
+    // 3. Zero transfer times not being exported causing missing Grafana series
+    pthread_mutex_lock(&g_primerLock);
+
+    // =======================================================================================
+    // COLLECTIVE METRICS WITH PRIMER
+    // =======================================================================================
     const auto& collectives = aggregator.getCollectives();
+    std::set<std::string> exportedCollectives;
+
+    // Phase 1: Process pending primers (from previous windows)
+    for (auto it = g_collectivePrimers.begin(); it != g_collectivePrimers.end();)
+    {
+        if (it->first.first != commState)
+        {
+            ++it;
+            continue;
+        }
+
+        const std::string& key                       = it->first.second;
+        PrimerData<AggregatedCollective>& primerData = it->second;
+
+        // Merge with current window data if present
+        auto currentIt = collectives.find(key);
+        if (currentIt != collectives.end())
+        {
+            primerData.aggregatedData = mergeAggregatedCollective(primerData.aggregatedData, currentIt->second);
+            exportedCollectives.insert(key);
+        }
+
+        if (primerData.state == PrimerState::PENDING_PRIMER)
+        {
+            // Check if we've exceeded maximum wait time - force emit to prevent indefinite waiting
+            if (primerData.windowsWaited >= PRIMER_MAX_WAIT_WINDOWS)
+            {
+                std::string scaleUpMode = scaleUpModeKnown ? commState->getScaleUpExecModeString() : "unknown";
+                exportCollectiveMetrics(key, primerData.aggregatedData, commState->rank, commState->hostname,
+                                        commState->local_rank, commState->comm_hash, commState->gpu_pci_bus_id,
+                                        commState->gpu_uuid, commState->getCommTypeString(), commState->nranks,
+                                        scaleUpMode, true);
+                primerData.state = PrimerState::PRIMER_EMITTED_AWAITING_REAL;
+                OTEL_INFO(NCCL_INIT,
+                          "Collective PRIMER FORCE-EMITTED: %s (max wait of %u windows exceeded, "
+                          "scale_up_exec_mode=%s, count=%d, bytes=%zu)",
+                          key.c_str(), PRIMER_MAX_WAIT_WINDOWS, scaleUpMode.c_str(), primerData.aggregatedData.count,
+                          primerData.aggregatedData.totalBytes);
+                ++it;
+            }
+            else if (!scaleUpModeKnown)
+            {
+                primerData.windowsWaited++;
+                // Still waiting for scale_up_exec_mode to be known
+                OTEL_TRACE(NCCL_INIT,
+                           "Collective PRIMER DELAYED: %s (scale_up_exec_mode still UNKNOWN, waited %u/%u windows, "
+                           "accumulating: count=%d, bytes=%zu)",
+                           key.c_str(), primerData.windowsWaited, PRIMER_MAX_WAIT_WINDOWS,
+                           primerData.aggregatedData.count, primerData.aggregatedData.totalBytes);
+                ++it;
+            }
+            else
+            {
+                std::string scaleUpMode = commState->getScaleUpExecModeString();
+
+                // CUDA_GRAPH is the final stable state - emit immediately!
+                // Once CUDA graphs are captured during warmup, they persist and the mode never
+                // transitions back to NON_CUDA_GRAPH. Emitting immediately avoids unnecessary delay.
+                if (scaleUpMode == std::string("cuda_graph"))
+                {
+                    exportCollectiveMetrics(key, primerData.aggregatedData, commState->rank, commState->hostname,
+                                            commState->local_rank, commState->comm_hash, commState->gpu_pci_bus_id,
+                                            commState->gpu_uuid, commState->getCommTypeString(), commState->nranks,
+                                            scaleUpMode, true);
+                    primerData.state = PrimerState::PRIMER_EMITTED_AWAITING_REAL;
+                    OTEL_TRACE(NCCL_INIT,
+                               "Collective PRIMER EMITTED: %s (zeros sent immediately with stable "
+                               "scale_up_exec_mode=%s, real data on next window: count=%d, bytes=%zu)",
+                               key.c_str(), scaleUpMode.c_str(), primerData.aggregatedData.count,
+                               primerData.aggregatedData.totalBytes);
+                    ++it;
+                }
+                // NON_CUDA_GRAPH might transition to CUDA_GRAPH during warmup - wait to stabilize
+                else if (primerData.windowsWaited < PRIMER_STABILIZATION_WINDOWS)
+                {
+                    primerData.windowsWaited++;
+                    OTEL_TRACE(NCCL_INIT,
+                               "Collective PRIMER STABILIZING: %s (scale_up_exec_mode=%s, waited %u/%u windows, "
+                               "accumulating: count=%d, bytes=%zu)",
+                               key.c_str(), scaleUpMode.c_str(), primerData.windowsWaited, PRIMER_STABILIZATION_WINDOWS,
+                               primerData.aggregatedData.count, primerData.aggregatedData.totalBytes);
+                    ++it;
+                }
+                else
+                {
+                    // Mode has been NON_CUDA_GRAPH for N windows - it's stable, emit primer
+                    exportCollectiveMetrics(key, primerData.aggregatedData, commState->rank, commState->hostname,
+                                            commState->local_rank, commState->comm_hash, commState->gpu_pci_bus_id,
+                                            commState->gpu_uuid, commState->getCommTypeString(), commState->nranks,
+                                            scaleUpMode, true);
+                    primerData.state = PrimerState::PRIMER_EMITTED_AWAITING_REAL;
+                    OTEL_TRACE(NCCL_INIT,
+                               "Collective PRIMER EMITTED: %s (zeros sent with stable scale_up_exec_mode=%s after %u "
+                               "windows, real data on next window: count=%d, bytes=%zu)",
+                               key.c_str(), scaleUpMode.c_str(), primerData.windowsWaited,
+                               primerData.aggregatedData.count, primerData.aggregatedData.totalBytes);
+                    ++it;
+                }
+            }
+        }
+        else if (primerData.state == PrimerState::PRIMER_EMITTED_AWAITING_REAL)
+        {
+            // Emit the real accumulated data (mode should now be stable)
+            std::string scaleUpMode = commState->getScaleUpExecModeString();
+            exportCollectiveMetrics(key, primerData.aggregatedData, commState->rank, commState->hostname,
+                                    commState->local_rank, commState->comm_hash, commState->gpu_pci_bus_id,
+                                    commState->gpu_uuid, commState->getCommTypeString(), commState->nranks, scaleUpMode,
+                                    false);
+            OTEL_TRACE(
+                NCCL_INIT,
+                "Collective REAL DATA EXPORTED: %s (primer complete with scale_up_exec_mode=%s: count=%d, bytes=%zu)",
+                key.c_str(), scaleUpMode.c_str(), primerData.aggregatedData.count,
+                primerData.aggregatedData.totalBytes);
+            g_collectivePrimersDone.insert(it->first);  // Mark as done
+            it = g_collectivePrimers.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+
+    // Phase 2: Process keys from current window (either new keys needing primers, or keys with primers already done)
     for (const auto& pair : collectives)
     {
-        exportCollectiveMetrics(pair.first, pair.second, commState->rank, commState->hostname, commState->local_rank,
-                                commState->comm_hash, commState->gpu_pci_bus_id, commState->gpu_uuid,
-                                commState->getCommTypeString(), commState->nranks,
-                                commState->getScaleUpExecModeString());
+        if (exportedCollectives.count(pair.first)) continue;  // Already handled
+
+        PrimerKey pkey = {commState, pair.first};
+
+        // Check if this key already completed its primer cycle - if so, export directly
+        if (g_collectivePrimersDone.count(pkey))
+        {
+            std::string scaleUpMode = commState->getScaleUpExecModeString();
+            exportCollectiveMetrics(pair.first, pair.second, commState->rank, commState->hostname,
+                                    commState->local_rank, commState->comm_hash, commState->gpu_pci_bus_id,
+                                    commState->gpu_uuid, commState->getCommTypeString(), commState->nranks, scaleUpMode,
+                                    false);
+            OTEL_TRACE(NCCL_INIT,
+                       "Collective: exporting real data (primer already done, scale_up_exec_mode=%s: %s, count=%d)",
+                       scaleUpMode.c_str(), pair.first.c_str(), pair.second.count);
+            continue;
+        }
+
+        // New key - always start in PENDING_PRIMER state to allow stabilization
+        g_collectivePrimers[pkey].aggregatedData = pair.second;
+        g_collectivePrimers[pkey].state          = PrimerState::PENDING_PRIMER;
+        g_collectivePrimers[pkey].windowsWaited  = 0;
+
+        if (!scaleUpModeKnown)
+        {
+            OTEL_INFO(NCCL_INIT, "Collective NEW KEY: %s (scale_up_exec_mode UNKNOWN, waiting: count=%d)",
+                      pair.first.c_str(), pair.second.count);
+        }
+        else
+        {
+            std::string scaleUpMode = commState->getScaleUpExecModeString();
+            OTEL_INFO(NCCL_INIT,
+                      "Collective NEW KEY: %s (scale_up_exec_mode=%s, starting %u-window stabilization: count=%d)",
+                      pair.first.c_str(), scaleUpMode.c_str(), PRIMER_STABILIZATION_WINDOWS, pair.second.count);
+        }
     }
 
-    // Export P2P Information
+    // =======================================================================================
+    // P2P METRICS WITH PRIMER (same logic as Collective)
+    // =======================================================================================
     const auto& p2ps = aggregator.getP2Ps();
+    std::set<std::string> exportedP2Ps;
+
+    // Phase 1: Process pending primers (from previous windows)
+    for (auto it = g_p2pPrimers.begin(); it != g_p2pPrimers.end();)
+    {
+        if (it->first.first != commState)
+        {
+            ++it;
+            continue;
+        }
+
+        const std::string& key                = it->first.second;
+        PrimerData<AggregatedP2P>& primerData = it->second;
+
+        auto currentIt = p2ps.find(key);
+        if (currentIt != p2ps.end())
+        {
+            primerData.aggregatedData = mergeAggregatedP2P(primerData.aggregatedData, currentIt->second);
+            exportedP2Ps.insert(key);
+        }
+
+        if (primerData.state == PrimerState::PENDING_PRIMER)
+        {
+            // Check if we've exceeded maximum wait time - force emit to prevent indefinite waiting
+            if (primerData.windowsWaited >= PRIMER_MAX_WAIT_WINDOWS)
+            {
+                std::string scaleUpMode = scaleUpModeKnown ? commState->getScaleUpExecModeString() : "unknown";
+                exportP2PMetrics(key, primerData.aggregatedData, commState->rank, commState->hostname,
+                                 commState->local_rank, commState->comm_hash, commState->gpu_pci_bus_id,
+                                 commState->gpu_uuid, commState->getCommTypeString(), commState->nranks, scaleUpMode,
+                                 true);
+                primerData.state = PrimerState::PRIMER_EMITTED_AWAITING_REAL;
+                OTEL_INFO(
+                    NCCL_INIT,
+                    "P2P PRIMER FORCE-EMITTED: %s (max wait of %u windows exceeded, scale_up_exec_mode=%s, count=%d)",
+                    key.c_str(), PRIMER_MAX_WAIT_WINDOWS, scaleUpMode.c_str(), primerData.aggregatedData.count);
+                ++it;
+            }
+            else if (!scaleUpModeKnown)
+            {
+                primerData.windowsWaited++;
+                OTEL_TRACE(NCCL_INIT,
+                           "P2P PRIMER DELAYED: %s (scale_up_exec_mode still UNKNOWN, waited %u/%u windows, "
+                           "accumulating: count=%d)",
+                           key.c_str(), primerData.windowsWaited, PRIMER_MAX_WAIT_WINDOWS,
+                           primerData.aggregatedData.count);
+                ++it;
+            }
+            else
+            {
+                std::string scaleUpMode = commState->getScaleUpExecModeString();
+
+                // CUDA_GRAPH is the final stable state - emit immediately!
+                // Once CUDA graphs are captured during warmup, they persist and the mode never
+                // transitions back to NON_CUDA_GRAPH. Emitting immediately avoids unnecessary delay.
+                if (scaleUpMode == std::string("cuda_graph"))
+                {
+                    exportP2PMetrics(key, primerData.aggregatedData, commState->rank, commState->hostname,
+                                     commState->local_rank, commState->comm_hash, commState->gpu_pci_bus_id,
+                                     commState->gpu_uuid, commState->getCommTypeString(), commState->nranks,
+                                     scaleUpMode, true);
+                    primerData.state = PrimerState::PRIMER_EMITTED_AWAITING_REAL;
+                    OTEL_TRACE(NCCL_INIT,
+                               "P2P PRIMER EMITTED: %s (zeros sent immediately with stable scale_up_exec_mode=%s, real "
+                               "data on next window: count=%d)",
+                               key.c_str(), scaleUpMode.c_str(), primerData.aggregatedData.count);
+                    ++it;
+                }
+                // NON_CUDA_GRAPH might transition to CUDA_GRAPH during warmup - wait to stabilize
+                else if (primerData.windowsWaited < PRIMER_STABILIZATION_WINDOWS)
+                {
+                    primerData.windowsWaited++;
+                    OTEL_TRACE(NCCL_INIT,
+                               "P2P PRIMER STABILIZING: %s (scale_up_exec_mode=%s, waited %u/%u windows, accumulating: "
+                               "count=%d)",
+                               key.c_str(), scaleUpMode.c_str(), primerData.windowsWaited, PRIMER_STABILIZATION_WINDOWS,
+                               primerData.aggregatedData.count);
+                    ++it;
+                }
+                else
+                {
+                    // Mode has been NON_CUDA_GRAPH for N windows - it's stable, emit primer
+                    exportP2PMetrics(key, primerData.aggregatedData, commState->rank, commState->hostname,
+                                     commState->local_rank, commState->comm_hash, commState->gpu_pci_bus_id,
+                                     commState->gpu_uuid, commState->getCommTypeString(), commState->nranks,
+                                     scaleUpMode, true);
+                    primerData.state = PrimerState::PRIMER_EMITTED_AWAITING_REAL;
+                    OTEL_TRACE(NCCL_INIT,
+                               "P2P PRIMER EMITTED: %s (zeros sent with stable scale_up_exec_mode=%s after %u windows, "
+                               "real data on next window: count=%d)",
+                               key.c_str(), scaleUpMode.c_str(), primerData.windowsWaited,
+                               primerData.aggregatedData.count);
+                    ++it;
+                }
+            }
+        }
+        else if (primerData.state == PrimerState::PRIMER_EMITTED_AWAITING_REAL)
+        {
+            std::string scaleUpMode = commState->getScaleUpExecModeString();
+            exportP2PMetrics(key, primerData.aggregatedData, commState->rank, commState->hostname,
+                             commState->local_rank, commState->comm_hash, commState->gpu_pci_bus_id,
+                             commState->gpu_uuid, commState->getCommTypeString(), commState->nranks, scaleUpMode,
+                             false);
+            OTEL_TRACE(NCCL_INIT, "P2P REAL DATA EXPORTED: %s (primer complete with scale_up_exec_mode=%s: count=%d)",
+                       key.c_str(), scaleUpMode.c_str(), primerData.aggregatedData.count);
+            g_p2pPrimersDone.insert(it->first);  // Mark as done
+            it = g_p2pPrimers.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+
+    // Phase 2: Process keys from current window (either new keys needing primers, or keys with primers already done)
     for (const auto& pair : p2ps)
     {
-        exportP2PMetrics(pair.first, pair.second, commState->rank, commState->hostname, commState->local_rank,
-                         commState->comm_hash, commState->gpu_pci_bus_id, commState->gpu_uuid,
-                         commState->getCommTypeString(), commState->nranks, commState->getScaleUpExecModeString());
+        if (exportedP2Ps.count(pair.first)) continue;
+
+        PrimerKey pkey = {commState, pair.first};
+
+        // Check if this key already completed its primer cycle
+        if (g_p2pPrimersDone.count(pkey))
+        {
+            exportP2PMetrics(pair.first, pair.second, commState->rank, commState->hostname, commState->local_rank,
+                             commState->comm_hash, commState->gpu_pci_bus_id, commState->gpu_uuid,
+                             commState->getCommTypeString(), commState->nranks, commState->getScaleUpExecModeString(),
+                             false);
+            continue;
+        }
+
+        // New key - always start in PENDING_PRIMER state to allow stabilization
+        g_p2pPrimers[pkey].aggregatedData = pair.second;
+        g_p2pPrimers[pkey].state          = PrimerState::PENDING_PRIMER;
+        g_p2pPrimers[pkey].windowsWaited  = 0;
+
+        if (!scaleUpModeKnown)
+        {
+            OTEL_INFO(NCCL_INIT, "P2P NEW KEY: %s (scale_up_exec_mode UNKNOWN, waiting: count=%d)", pair.first.c_str(),
+                      pair.second.count);
+        }
+        else
+        {
+            std::string scaleUpMode = commState->getScaleUpExecModeString();
+            OTEL_INFO(NCCL_INIT, "P2P NEW KEY: %s (scale_up_exec_mode=%s, starting %u-window stabilization: count=%d)",
+                      pair.first.c_str(), scaleUpMode.c_str(), PRIMER_STABILIZATION_WINDOWS, pair.second.count);
+        }
     }
 
-    // Export Rank Information
+    // =======================================================================================
+    // RANK METRICS WITH PRIMER
+    // =======================================================================================
     const auto& rankTransfers = aggregator.getRankTransfers();
+    std::set<std::string> exportedRanks;
+
+    // Phase 1: Process pending primers (from previous windows)
+    for (auto it = g_rankPrimers.begin(); it != g_rankPrimers.end();)
+    {
+        if (it->first.first != commState)
+        {
+            ++it;
+            continue;
+        }
+
+        const std::string& key                     = it->first.second;
+        PrimerData<AggregatedTransfer>& primerData = it->second;
+
+        auto currentIt = rankTransfers.find(key);
+        if (currentIt != rankTransfers.end())
+        {
+            primerData.aggregatedData = mergeAggregatedTransfer(primerData.aggregatedData, currentIt->second);
+            exportedRanks.insert(key);
+        }
+
+        if (primerData.state == PrimerState::PENDING_PRIMER)
+        {
+            // Check if we've exceeded maximum wait time - force emit to prevent indefinite waiting
+            if (primerData.windowsWaited >= PRIMER_MAX_WAIT_WINDOWS)
+            {
+                std::string scaleUpMode = scaleUpModeKnown ? commState->getScaleUpExecModeString() : "unknown";
+                exportRankMetrics(key, primerData.aggregatedData, commState->rank, commState->hostname,
+                                  commState->gpu_pci_bus_id, commState->gpu_uuid, commState->getCommTypeString(),
+                                  commState->nranks, commState->local_rank, scaleUpMode, true);
+                primerData.state = PrimerState::PRIMER_EMITTED_AWAITING_REAL;
+                OTEL_INFO(
+                    NCCL_INIT,
+                    "Rank PRIMER FORCE-EMITTED: %s (max wait of %u windows exceeded, scale_up_exec_mode=%s, count=%d)",
+                    key.c_str(), PRIMER_MAX_WAIT_WINDOWS, scaleUpMode.c_str(), primerData.aggregatedData.count);
+                ++it;
+            }
+            else if (!scaleUpModeKnown)
+            {
+                primerData.windowsWaited++;
+                OTEL_TRACE(NCCL_INIT,
+                           "Rank PRIMER DELAYED: %s (scale_up_exec_mode still UNKNOWN, waited %u/%u windows: count=%d)",
+                           key.c_str(), primerData.windowsWaited, PRIMER_MAX_WAIT_WINDOWS,
+                           primerData.aggregatedData.count);
+                ++it;
+            }
+            else
+            {
+                std::string scaleUpMode = commState->getScaleUpExecModeString();
+
+                // CUDA_GRAPH is the final stable state - emit immediately!
+                // Once CUDA graphs are captured during warmup, they persist and the mode never
+                // transitions back to NON_CUDA_GRAPH. Emitting immediately avoids unnecessary delay.
+                if (scaleUpMode == std::string("cuda_graph"))
+                {
+                    exportRankMetrics(key, primerData.aggregatedData, commState->rank, commState->hostname,
+                                      commState->gpu_pci_bus_id, commState->gpu_uuid, commState->getCommTypeString(),
+                                      commState->nranks, commState->local_rank, scaleUpMode, true);
+                    primerData.state = PrimerState::PRIMER_EMITTED_AWAITING_REAL;
+                    OTEL_TRACE(
+                        NCCL_INIT,
+                        "Rank PRIMER EMITTED: %s (zeros sent immediately with stable scale_up_exec_mode=%s, real "
+                        "data on next window: count=%d)",
+                        key.c_str(), scaleUpMode.c_str(), primerData.aggregatedData.count);
+                    ++it;
+                }
+                // NON_CUDA_GRAPH might transition to CUDA_GRAPH during warmup - wait to stabilize
+                else if (primerData.windowsWaited < PRIMER_STABILIZATION_WINDOWS)
+                {
+                    primerData.windowsWaited++;
+                    OTEL_TRACE(
+                        NCCL_INIT,
+                        "Rank PRIMER STABILIZING: %s (scale_up_exec_mode=%s, waited %u/%u windows, accumulating: "
+                        "count=%d)",
+                        key.c_str(), scaleUpMode.c_str(), primerData.windowsWaited, PRIMER_STABILIZATION_WINDOWS,
+                        primerData.aggregatedData.count);
+                    ++it;
+                }
+                else
+                {
+                    // Mode has been NON_CUDA_GRAPH for N windows - it's stable, emit primer
+                    exportRankMetrics(key, primerData.aggregatedData, commState->rank, commState->hostname,
+                                      commState->gpu_pci_bus_id, commState->gpu_uuid, commState->getCommTypeString(),
+                                      commState->nranks, commState->local_rank, scaleUpMode, true);
+                    primerData.state = PrimerState::PRIMER_EMITTED_AWAITING_REAL;
+                    OTEL_TRACE(
+                        NCCL_INIT,
+                        "Rank PRIMER EMITTED: %s (zeros sent with stable scale_up_exec_mode=%s after %u windows, "
+                        "real data on next window: count=%d)",
+                        key.c_str(), scaleUpMode.c_str(), primerData.windowsWaited, primerData.aggregatedData.count);
+                    ++it;
+                }
+            }
+        }
+        else if (primerData.state == PrimerState::PRIMER_EMITTED_AWAITING_REAL)
+        {
+            std::string scaleUpMode = commState->getScaleUpExecModeString();
+            exportRankMetrics(key, primerData.aggregatedData, commState->rank, commState->hostname,
+                              commState->gpu_pci_bus_id, commState->gpu_uuid, commState->getCommTypeString(),
+                              commState->nranks, commState->local_rank, scaleUpMode, false);
+            OTEL_TRACE(NCCL_INIT, "Rank REAL DATA EXPORTED: %s (primer complete with scale_up_exec_mode=%s: count=%d)",
+                       key.c_str(), scaleUpMode.c_str(), primerData.aggregatedData.count);
+            g_rankPrimersDone.insert(it->first);  // Mark as done
+            it = g_rankPrimers.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+
+    // Phase 2: Process keys from current window (either new keys needing primers, or keys with primers already done)
     for (const auto& pair : rankTransfers)
     {
-        exportRankMetrics(pair.first, pair.second, commState->rank, commState->hostname, commState->gpu_pci_bus_id,
-                          commState->gpu_uuid, commState->getCommTypeString(), commState->nranks, commState->local_rank,
-                          commState->getScaleUpExecModeString());
+        if (exportedRanks.count(pair.first)) continue;
+
+        PrimerKey pkey = {commState, pair.first};
+
+        // Check if this key already completed its primer cycle
+        if (g_rankPrimersDone.count(pkey))
+        {
+            exportRankMetrics(pair.first, pair.second, commState->rank, commState->hostname, commState->gpu_pci_bus_id,
+                              commState->gpu_uuid, commState->getCommTypeString(), commState->nranks,
+                              commState->local_rank, commState->getScaleUpExecModeString(), false);
+            continue;
+        }
+
+        // New key - always start in PENDING_PRIMER state to allow stabilization
+        g_rankPrimers[pkey].aggregatedData = pair.second;
+        g_rankPrimers[pkey].state          = PrimerState::PENDING_PRIMER;
+        g_rankPrimers[pkey].windowsWaited  = 0;
+
+        if (!scaleUpModeKnown)
+        {
+            OTEL_INFO(NCCL_INIT, "Rank NEW KEY: %s (scale_up_exec_mode UNKNOWN, waiting: count=%d)", pair.first.c_str(),
+                      pair.second.count);
+        }
+        else
+        {
+            std::string scaleUpMode = commState->getScaleUpExecModeString();
+            OTEL_INFO(NCCL_INIT, "Rank NEW KEY: %s (scale_up_exec_mode=%s, starting %u-window stabilization: count=%d)",
+                      pair.first.c_str(), scaleUpMode.c_str(), PRIMER_STABILIZATION_WINDOWS, pair.second.count);
+        }
     }
 
-    // Export Transfer Information
+    // =======================================================================================
+    // TRANSFER METRICS WITH PRIMER
+    // =======================================================================================
     const auto& channelTransfers = aggregator.getChannelTransfers();
+    std::set<std::string> exportedTransfers;
+
+    // Phase 1: Process pending primers (from previous windows)
+    for (auto it = g_transferPrimers.begin(); it != g_transferPrimers.end();)
+    {
+        if (it->first.first != commState)
+        {
+            ++it;
+            continue;
+        }
+
+        const std::string& key                     = it->first.second;
+        PrimerData<AggregatedTransfer>& primerData = it->second;
+
+        auto currentIt = channelTransfers.find(key);
+        if (currentIt != channelTransfers.end())
+        {
+            primerData.aggregatedData = mergeAggregatedTransfer(primerData.aggregatedData, currentIt->second);
+            exportedTransfers.insert(key);
+        }
+
+        if (primerData.state == PrimerState::PENDING_PRIMER)
+        {
+            // Check if we've exceeded maximum wait time - force emit to prevent indefinite waiting
+            if (primerData.windowsWaited >= PRIMER_MAX_WAIT_WINDOWS)
+            {
+                std::string scaleUpMode = scaleUpModeKnown ? commState->getScaleUpExecModeString() : "unknown";
+                exportTransferMetrics(key, primerData.aggregatedData, commState->rank, commState->hostname,
+                                      commState->gpu_pci_bus_id, commState->gpu_uuid, commState->getCommTypeString(),
+                                      commState->nranks, commState->local_rank, scaleUpMode, true);
+                primerData.state = PrimerState::PRIMER_EMITTED_AWAITING_REAL;
+                OTEL_INFO(NCCL_INIT,
+                          "Transfer PRIMER FORCE-EMITTED: %s (max wait of %u windows exceeded, scale_up_exec_mode=%s, "
+                          "count=%d)",
+                          key.c_str(), PRIMER_MAX_WAIT_WINDOWS, scaleUpMode.c_str(), primerData.aggregatedData.count);
+                ++it;
+            }
+            else if (!scaleUpModeKnown)
+            {
+                primerData.windowsWaited++;
+                OTEL_TRACE(
+                    NCCL_INIT,
+                    "Transfer PRIMER DELAYED: %s (scale_up_exec_mode still UNKNOWN, waited %u/%u windows: count=%d)",
+                    key.c_str(), primerData.windowsWaited, PRIMER_MAX_WAIT_WINDOWS, primerData.aggregatedData.count);
+                ++it;
+            }
+            else
+            {
+                std::string scaleUpMode = commState->getScaleUpExecModeString();
+
+                // CUDA_GRAPH is the final stable state - emit immediately!
+                // Once CUDA graphs are captured during warmup, they persist and the mode never
+                // transitions back to NON_CUDA_GRAPH. Emitting immediately avoids unnecessary delay.
+                if (scaleUpMode == std::string("cuda_graph"))
+                {
+                    exportTransferMetrics(key, primerData.aggregatedData, commState->rank, commState->hostname,
+                                          commState->gpu_pci_bus_id, commState->gpu_uuid,
+                                          commState->getCommTypeString(), commState->nranks, commState->local_rank,
+                                          scaleUpMode, true);
+                    primerData.state = PrimerState::PRIMER_EMITTED_AWAITING_REAL;
+                    OTEL_TRACE(NCCL_INIT,
+                               "Transfer PRIMER EMITTED: %s (zeros sent immediately with stable scale_up_exec_mode=%s, "
+                               "real data on next window: count=%d)",
+                               key.c_str(), scaleUpMode.c_str(), primerData.aggregatedData.count);
+                    ++it;
+                }
+                // NON_CUDA_GRAPH might transition to CUDA_GRAPH during warmup - wait to stabilize
+                else if (primerData.windowsWaited < PRIMER_STABILIZATION_WINDOWS)
+                {
+                    primerData.windowsWaited++;
+                    OTEL_TRACE(NCCL_INIT,
+                               "Transfer PRIMER STABILIZING: %s (scale_up_exec_mode=%s, waited %u/%u windows, "
+                               "accumulating: count=%d)",
+                               key.c_str(), scaleUpMode.c_str(), primerData.windowsWaited, PRIMER_STABILIZATION_WINDOWS,
+                               primerData.aggregatedData.count);
+                    ++it;
+                }
+                else
+                {
+                    // Mode has been NON_CUDA_GRAPH for N windows - it's stable, emit primer
+                    exportTransferMetrics(key, primerData.aggregatedData, commState->rank, commState->hostname,
+                                          commState->gpu_pci_bus_id, commState->gpu_uuid,
+                                          commState->getCommTypeString(), commState->nranks, commState->local_rank,
+                                          scaleUpMode, true);
+                    primerData.state = PrimerState::PRIMER_EMITTED_AWAITING_REAL;
+                    OTEL_TRACE(NCCL_INIT,
+                               "Transfer PRIMER EMITTED: %s (zeros sent with stable scale_up_exec_mode=%s after %u "
+                               "windows, real data on next window: count=%d)",
+                               key.c_str(), scaleUpMode.c_str(), primerData.windowsWaited,
+                               primerData.aggregatedData.count);
+                    ++it;
+                }
+            }
+        }
+        else if (primerData.state == PrimerState::PRIMER_EMITTED_AWAITING_REAL)
+        {
+            std::string scaleUpMode = commState->getScaleUpExecModeString();
+            exportTransferMetrics(key, primerData.aggregatedData, commState->rank, commState->hostname,
+                                  commState->gpu_pci_bus_id, commState->gpu_uuid, commState->getCommTypeString(),
+                                  commState->nranks, commState->local_rank, scaleUpMode, false);
+            OTEL_TRACE(NCCL_INIT,
+                       "Transfer REAL DATA EXPORTED: %s (primer complete with scale_up_exec_mode=%s: count=%d)",
+                       key.c_str(), scaleUpMode.c_str(), primerData.aggregatedData.count);
+            g_transferPrimersDone.insert(it->first);  // Mark as done
+            it = g_transferPrimers.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+
+    // Phase 2: Process keys from current window (either new keys needing primers, or keys with primers already done)
     for (const auto& pair : channelTransfers)
     {
-        exportTransferMetrics(pair.first, pair.second, commState->rank, commState->hostname, commState->gpu_pci_bus_id,
-                              commState->gpu_uuid, commState->getCommTypeString(), commState->nranks,
-                              commState->local_rank, commState->getScaleUpExecModeString());
+        if (exportedTransfers.count(pair.first)) continue;
+
+        PrimerKey pkey = {commState, pair.first};
+
+        // Check if this key already completed its primer cycle
+        if (g_transferPrimersDone.count(pkey))
+        {
+            exportTransferMetrics(pair.first, pair.second, commState->rank, commState->hostname,
+                                  commState->gpu_pci_bus_id, commState->gpu_uuid, commState->getCommTypeString(),
+                                  commState->nranks, commState->local_rank, commState->getScaleUpExecModeString(),
+                                  false);
+            continue;
+        }
+        // New key - always start in PENDING_PRIMER state to allow stabilization
+        g_transferPrimers[pkey].aggregatedData = pair.second;
+        g_transferPrimers[pkey].state          = PrimerState::PENDING_PRIMER;
+        g_transferPrimers[pkey].windowsWaited  = 0;
+
+        if (!scaleUpModeKnown)
+        {
+            OTEL_INFO(NCCL_INIT, "Transfer NEW KEY: %s (scale_up_exec_mode UNKNOWN, waiting: count=%d)",
+                      pair.first.c_str(), pair.second.count);
+        }
+        else
+        {
+            std::string scaleUpMode = commState->getScaleUpExecModeString();
+            OTEL_INFO(NCCL_INIT,
+                      "Transfer NEW KEY: %s (scale_up_exec_mode=%s, starting %u-window stabilization: count=%d)",
+                      pair.first.c_str(), scaleUpMode.c_str(), PRIMER_STABILIZATION_WINDOWS, pair.second.count);
+        }
     }
+
+    pthread_mutex_unlock(&g_primerLock);
 
     // Transition window back to READY state
     window->state.store(WINDOW_READY, std::memory_order_release);
