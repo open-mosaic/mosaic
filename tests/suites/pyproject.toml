@@ -7,7 +7,7 @@ description = "Mosaic integration test suite"
 requires-python = ">=3.14"
 dependencies = []
 
-pythonpath = ["."]
+[tool.pytest.ini_options]
 testpaths = ["."]
 python_files = "test_*.py"
 python_functions = "test_*"
