@@ -16,11 +16,11 @@ services:
     environment:
       - MOSAIC_PATH=${MOSAIC_PATH}
       - RUN_MAKE_TARGET=run-tests
-      - PYTEST_ARGS="--junitxml=/app/results/test_results.xml"
+      - PYTEST_ADDOPTS="--junitxml=/app/results/test_results.xml"
       - TEST_MARKER="profiler_otel or dashboards"
     network_mode: "host"
     volumes:
-      - ./suites:/app/framework/tests:ro
+      - ./suites:/app/tests:ro
       - ../deployments/dashboards:/mnt/dashboards:ro
       - test-results:/app/results
       - /var/run/docker.sock:/var/run/docker.sock

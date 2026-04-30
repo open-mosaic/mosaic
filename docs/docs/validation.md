@@ -117,7 +117,7 @@ To enter the shell, remove the `RUN_MAKE_TARGET` environment variable from `test
     environment:
       - MOSAIC_PATH=${MOSAIC_PATH}
 -     - RUN_MAKE_TARGET=profiler-otel-test-only
-      - PYTEST_ARGS="--junitxml=/app/results/results.xml"
+      - PYTEST_ADDOPTS="--junitxml=/app/results/results.xml"
 ```
 
 Running the `make test` command will start the container stack,
@@ -134,7 +134,7 @@ The host's Docker socket can be mounted into the container to run `docker` comma
     container_name: production-test-framework
     environment:
       - MOSAIC_PATH=${MOSAIC_PATH}
-      - PYTEST_ARGS="--junitxml=/app/results/results.xml"
+      - PYTEST_ADDOPTS="--junitxml=/app/results/results.xml"
     network_mode: "host"
     volumes:
       - ./suites:/app/tests:ro
