@@ -17,7 +17,7 @@ services:
       - MOSAIC_PATH=${MOSAIC_PATH}
       - RUN_MAKE_TARGET=run-tests
       - PYTEST_ADDOPTS="--junitxml=/app/results/test_results.xml"
-      - TEST_MARKER="'profiler_otel or dashboards'"
+      - TEST_MARKER="profiler_otel or dashboards"
     network_mode: "host"
     volumes:
       - ./suites:/app/tests:ro
