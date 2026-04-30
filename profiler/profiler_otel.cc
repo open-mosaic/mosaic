@@ -205,6 +205,8 @@ static const char* getEventTypeName(uint64_t type)
             return "ProxyCtrl";
         case 64:  // ncclProfileKernelCh
             return "KernelCh";
+        case 1024:  // ncclProfileP2pApi
+            return "P2pApi";
         case 2048:  // ncclProfileKernelLaunch
             return "KernelLaunch";
         default:
@@ -630,7 +632,12 @@ OTEL_HIDDEN ncclResult_t profiler_otel_init_v5(void** context, uint64_t commId, 
     }
     else
     {
-        // P2P communicator (nranks == 2): look up rank from GPU ID map
+        // P2P communicator (nranks == 2): always classified as P2P regardless of context.
+        // This covers both pipeline-parallel communicators in LLM training and standalone
+        // send/recv scenario.  The GPU→rank map is consulted only for local_rank resolution
+        // (which GPU slot this rank occupies within the node); comm_type is set unconditionally.
+        ctx->commState->comm_type = CommunicatorState::CommType::P2P;
+
         bool found = false;
         if (!ctx->commState->gpu_pci_bus_id.empty() && ctx->commState->gpu_pci_bus_id != "unknown")
         {
@@ -639,7 +646,6 @@ OTEL_HIDDEN ncclResult_t profiler_otel_init_v5(void** context, uint64_t commId, 
             if (it != g_gpu_id_to_rank.end())
             {
                 ctx->commState->local_rank = it->second;
-                ctx->commState->comm_type  = CommunicatorState::CommType::P2P;
                 found                      = true;
                 OTEL_TRACE(NCCL_INIT, "P2P: Found GPU %s → rank %d from map", ctx->commState->gpu_pci_bus_id.c_str(),
                            ctx->commState->local_rank);
@@ -648,10 +654,10 @@ OTEL_HIDDEN ncclResult_t profiler_otel_init_v5(void** context, uint64_t commId, 
 
         if (!found)
         {
-            // Fallback: use provided rank because it might be a collective of 2 GPUs
+            // Map not yet populated (e.g. standalone sendrecv test with no prior collective comm).
+            // Fall back to the provided rank as best estimate for local_rank.
             ctx->commState->local_rank = rank;
-            ctx->commState->comm_type  = CommunicatorState::CommType::COLLECTIVE;
-            OTEL_TRACE(NCCL_INIT, "P2P/COLLECTIVE: GPU ID not in map, using rank=%d as local_rank (GPU=%s)", rank,
+            OTEL_TRACE(NCCL_INIT, "P2P: GPU ID not in map, using rank=%d as local_rank (GPU=%s)", rank,
                        ctx->commState->gpu_pci_bus_id.c_str());
         }
     }
@@ -741,13 +747,36 @@ OTEL_HIDDEN ncclResult_t profiler_otel_start_event_v5(void* context, void** eHan
         return ncclSuccess;
     }
 
+    // Skip KernelCh events with NULL parentObj.
+    //
+    // NCCL sets eDescr->parentObj = sub->taskEventHandle (the profiler handle for the P2P
+    // or Coll task that owns this GPU channel).  For P2P Recv sub-operations our plugin
+    // returns NULL eHandle (we only track the send direction), so taskEventHandle == NULL,
+    // and the resulting KernelCh arrives with parentObj == NULL.
+    //
+    // A null-parent KernelCh:
+    //  - contributes nothing to aggregation (no parent Coll/P2P to link to), and
+    //  - is NOT counted in in_progress_count, so the window can transition to PROCESSING
+    //    before NCCL calls stop_event for it, producing a spurious "endTs=0" WARN.
+    //
+    // Filtering it here is symmetric with the Recv P2P / Recv ProxyOp filters above.
+    if (type == ncclProfileKernelCh && eDescr->parentObj == NULL)
+    {
+        OTEL_TRACE(NCCL_INIT, "Skipping KernelCh with NULL parentObj (Recv sub-op, no aggregation value)");
+        return ncclSuccess;
+    }
+
     // Skip API-level and plugin events that NCCL sends as parents of our requested events.
     // NCCL uses a combined mask: if any child event type is active (e.g., ncclProfileColl),
     // the parent API event (ncclProfileCollApi) is also sent to the plugin regardless of
     // whether the plugin requested it. These waste circular buffer slots and produce
     // zombie events (endTs=0) if not filtered here before allocation.
-    if (type == ncclProfileGroupApi || type == ncclProfileCollApi || type == ncclProfileP2pApi ||
-        type == ncclProfileNetPlugin)
+    //
+    // Exception: ncclProfileP2pApi is NOT filtered — it carries the original collective
+    // function name (e.g., "AlltoAll") and serves as the grouping parent for P2P tasks
+    // that are decomposed from a collective call.  Tracking it allows the aggregator to
+    // synthesize a single Collective metric entry for AlltoAll operations.
+    if (type == ncclProfileGroupApi || type == ncclProfileCollApi || type == ncclProfileNetPlugin)
     {
         return ncclSuccess;
     }
@@ -827,7 +856,16 @@ OTEL_HIDDEN ncclResult_t profiler_otel_start_event_v5(void* context, void** eHan
         // P2P Recv events are filtered at the top of start_event (eHandle=NULL),
         // so they never reach stop_event and would never get mark_complete.
         bool isSend = eDescr->p2p.func && (strstr(eDescr->p2p.func, "Send") != nullptr);
-        if (isSend)
+
+        // AlltoAll (and similar collectives) decomposes into P2P operations that include a
+        // "self-send" where peer == rank.  Self-sends are handled by NCCL via a direct local
+        // memory copy — no proxy thread is involved, so no ProxyOp or KernelCh child event
+        // ever arrives.  If we count them in in_progress_count / pending_first_child, the
+        // window will never drain and will remain stuck in CLOSING until the 5-second timeout
+        // forces it to READY, silently discarding all buffered telemetry data.
+        bool isSelfSend = isSend && (eDescr->p2p.peer == eDescr->rank);
+
+        if (isSend && !isSelfSend)
         {
             // Increment in_progress_count by 1 for this P2P Send.
             // The matching -1 comes from the first child (ProxyOp or KernelCh) to complete.
@@ -838,6 +876,15 @@ OTEL_HIDDEN ncclResult_t profiler_otel_start_event_v5(void* context, void** eHan
                 "Started P2P Send [eHandle=%p], parentChain=%s: %s, bytes=%zu, peer=%d, channels=%d (pending ops+=1)",
                 otel_event, getParentChain(eDescr->parentObj, ctx->commState), eDescr->p2p.func, otel_event->p2p.bytes,
                 eDescr->p2p.peer, eDescr->p2p.nChannels);
+        }
+        else if (isSelfSend)
+        {
+            // Self-send: local copy, no proxy child expected — do NOT touch in_progress counters.
+            OTEL_TRACE(NCCL_INIT,
+                       "Started P2P Send-to-self [eHandle=%p], parentChain=%s: %s, bytes=%zu, peer=%d, channels=%d "
+                       "(self-send, no proxy child expected, not tracked in window)",
+                       otel_event, getParentChain(eDescr->parentObj, ctx->commState), eDescr->p2p.func,
+                       otel_event->p2p.bytes, eDescr->p2p.peer, eDescr->p2p.nChannels);
         }
         else
         {
@@ -938,6 +985,16 @@ OTEL_HIDDEN ncclResult_t profiler_otel_start_event_v5(void* context, void** eHan
     {
         OTEL_TRACE(NCCL_INIT, "Started KernelLaunch [eHandle=%p], parentChain=%s", otel_event,
                    getParentChain(eDescr->parentObj, ctx->commState));
+    }
+    else if (type == ncclProfileP2pApi)
+    {
+        // Store the original collective function name (e.g., "AlltoAll").
+        // This event acts as a grouping anchor for the individual P2P Send tasks
+        // that NCCL emits when decomposing a collective such as AlltoAll into P2P ops.
+        // No window management (in_progress tracking) is needed for this marker event.
+        otel_event->p2pApi.func = eDescr->p2pApi.func;
+        OTEL_TRACE(NCCL_INIT, "Stored P2pApi marker [eHandle=%p], func=%s (AlltoAll collective grouping anchor)",
+                   otel_event, eDescr->p2pApi.func ? eDescr->p2pApi.func : "NULL");
     }
     else
     {
@@ -1277,6 +1334,9 @@ OTEL_HIDDEN ncclResult_t profiler_otel_record_event_state_v5(void* eHandle, nccl
         case ncclProfilerProxyStepSendGPUWait:
             state_name = "ProxyStepSendGPUWait";
             break;
+        case ncclProfilerProxyStepSendPeerWait_v4:
+            state_name = "ProxyStepSendPeerWait";
+            break;
         case ncclProfilerProxyStepSendWait:
             state_name = "ProxyStepSendWait";
             break;
@@ -1288,6 +1348,11 @@ OTEL_HIDDEN ncclResult_t profiler_otel_record_event_state_v5(void* eHandle, nccl
             break;
         case ncclProfilerProxyStepRecvGPUWait:
             state_name = "ProxyStepRecvGPUWait";
+            break;
+
+        // ProxyOp states
+        case ncclProfilerProxyOpInProgress_v4:
+            state_name = "ProxyOpInProgress";
             break;
 
         // Kernel channel states

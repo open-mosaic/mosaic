@@ -475,6 +475,16 @@ private:
     // KernelLaunch events (informational)
     std::vector<otelEventHandle_t> kernelLaunches;
 
+    // -------------------------------------------------------------------------
+    // AlltoAll collective reconstruction from P2pApi + P2P events
+    // -------------------------------------------------------------------------
+    // Maps P2pApi event handle -> original collective function name (e.g., "AlltoAll").
+    // Populated when a ncclProfileP2pApi event is processed in addEvent().
+    std::map<const void*, std::string> p2pApiHandleToFunc;
+    // Maps P2pApi event handle -> list of P2P Send event handles that share this parent.
+    // Populated when a ncclProfileP2p event has a parentObj that is a P2pApi handle.
+    std::map<const void*, std::vector<const void*>> p2pHandlesByApiHandle;
+
     /**
      * @brief Generate aggregation key for a collective event.
      *

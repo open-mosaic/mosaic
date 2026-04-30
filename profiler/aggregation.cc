@@ -4,6 +4,7 @@
 #include "aggregation.h"
 
 #include <algorithm>
+#include <limits>
 #include <sstream>
 #include <unordered_map>
 #include <vector>
@@ -208,7 +209,29 @@ void WindowAggregator::addEvent(const otelEventHandle_t& event)
 
         p2pHandleToOp[&event] = op;
 
+        // If this P2P Send has a P2pApi parent, register it for AlltoAll collective grouping.
+        // All P2P tasks from a single AlltoAll share the same P2pApi event handle as parentObj.
+        if (event.parentObj && p2pApiHandleToFunc.count(event.parentObj))
+        {
+            p2pHandlesByApiHandle[event.parentObj].push_back(&event);
+            OTEL_TRACE(NCCL_INIT, "Linked P2P Send (peer=%d) to P2pApi parent %p (%s)", event.p2p.peer, event.parentObj,
+                       p2pApiHandleToFunc.at(event.parentObj).c_str());
+        }
+
         OTEL_TRACE(NCCL_INIT, "Tracked P2P: %s, eHandle=%p, endTs=%.2f", op.key.c_str(), &event, op.endTs);
+    }
+    // Phase 1b: Track P2pApi group markers (AlltoAll collective anchors)
+    // P2pApi events carry the original collective function name (e.g., "AlltoAll").
+    // They are stored before P2p events in the buffer, so p2pApiHandleToFunc is populated
+    // before P2p events reference them via parentObj.
+    else if (event.type == ncclProfileP2pApi)
+    {
+        if (event.p2pApi.func)
+        {
+            p2pApiHandleToFunc[&event] = std::string(event.p2pApi.func);
+            OTEL_TRACE(NCCL_INIT, "Tracked P2pApi marker: func=%s, eHandle=%p", event.p2pApi.func, &event);
+        }
+        return;  // No further processing; just a grouping anchor
     }
     // Phase 2: Aggregate ProxyStep transfers to their parent ProxyOp
     else if (event.type == ncclProfileProxyStep)
@@ -545,6 +568,107 @@ void WindowAggregator::finalize()
     // =========================================================================
     finalizeScaleUpOperations(collHandleToOp, true);
     finalizeScaleUpOperations(p2pHandleToOp, false);
+
+    // =========================================================================
+    // Phase 4: Synthesize Collective metrics for AlltoAll-style operations.
+    //
+    // NCCL decomposes AlltoAll (and similar collectives) into individual P2P
+    // Send tasks.  Each task gets its own P2P metric, but the high-level
+    // AlltoAll operation is invisible in the Collective section of the dashboard.
+    //
+    // When ncclProfileP2pApi events are tracked (one per AlltoAll call), all
+    // corresponding P2P Send events share the same P2pApi handle as parentObj.
+    // This phase groups those sends back into a single Collective entry so
+    // AlltoAll operations appear in the Collective dashboard section.
+    //
+    // - Total bytes  = sum of bytes across all P2P Sends in the group.
+    // - Start time   = earliest P2P Send start among the group.
+    // - End time     = latest ProxyOp end (or P2P stop if no ProxyOps) in the group.
+    // - Transfer data is accumulated from the per-peer p2ps entries (already finalized
+    //   in Phase 2 above).
+    // =========================================================================
+    for (const auto& apiPair : p2pHandlesByApiHandle)
+    {
+        const void* apiHandle                      = apiPair.first;
+        const std::vector<const void*>& p2pHandles = apiPair.second;
+
+        auto funcIt = p2pApiHandleToFunc.find(apiHandle);
+        if (funcIt == p2pApiHandleToFunc.end()) continue;
+        const std::string& funcName = funcIt->second;
+
+        // Compute AlltoAll collective timing and bytes across all grouped P2P Sends.
+        size_t totalBytes          = 0;
+        double startTs             = std::numeric_limits<double>::max();
+        double endTs               = 0.0;
+        int totalTransferCount     = 0;
+        size_t totalTransferBytes  = 0;
+        double totalTransferTimeUs = 0.0;
+
+        const otelEventHandle_t* firstEvent = nullptr;
+        for (const void* p2pHandle : p2pHandles)
+        {
+            auto opIt = p2pHandleToOp.find(p2pHandle);
+            if (opIt == p2pHandleToOp.end()) continue;
+            const InProgressOperation& op = opIt->second;
+            if (!firstEvent) firstEvent = static_cast<const otelEventHandle_t*>(p2pHandle);
+
+            totalBytes += op.bytes;
+            startTs = std::min(startTs, op.startTs);
+
+            double opEnd = (op.seenProxyOps > 0) ? op.lastProxyOpEnd : op.endTs;
+            endTs        = std::max(endTs, opEnd);
+
+            // Accumulate transfer statistics from the per-peer p2ps entries that
+            // were finalized in Phase 2.  The transfer data is already present there
+            // regardless of whether we also export it per-peer via P2P metrics.
+            auto p2pIt = p2ps.find(op.key);
+            if (p2pIt != p2ps.end())
+            {
+                totalTransferCount += p2pIt->second.cachedTotalTransferCount;
+                totalTransferBytes += p2pIt->second.cachedTotalTransferBytes;
+                totalTransferTimeUs += p2pIt->second.cachedTotalTransferTimeUs;
+            }
+        }
+
+        if (!firstEvent || !firstEvent->commState) continue;
+
+        // Only synthesize Collective metrics for communicators that are not pure P2P
+        // (nranks == 2, CommType::P2P).  Explicit ncclSend/ncclRecv on a 2-rank
+        // pipeline-parallel communicator also produce P2pApi events (the same code
+        // path in NCCL is shared), so those must remain in the P2P section only.
+        if (firstEvent->commState->comm_type == CommunicatorState::CommType::P2P)
+        {
+            OTEL_TRACE(NCCL_INIT,
+                       "Skipping AlltoAll collective synthesis for P2P communicator (nranks=2, pipeline-parallel): "
+                       "func=%s, comm_hash=%lu",
+                       funcName.c_str(), firstEvent->commState->comm_hash);
+            continue;
+        }
+
+        double duration = endTs - startTs;
+        if (startTs >= endTs || duration <= 0)
+        {
+            OTEL_WARN(NCCL_INIT, "Skipping AlltoAll collective synthesis with invalid duration=%.2f us (func=%s)",
+                      duration, funcName.c_str());
+            continue;
+        }
+
+        // Build collective key: Comm<hash>_<func>_<nranks>Ranks
+        // Using nranks instead of algo/proto (unavailable for AlltoAll-as-P2P).
+        std::stringstream ss;
+        ss << "Comm" << firstEvent->commState->comm_hash << "_" << funcName << "_" << firstEvent->commState->nranks
+           << "Ranks";
+        std::string collKey = ss.str();
+
+        collectives[collKey].addCollective(totalBytes, duration);
+        if (totalTransferCount > 0)
+        {
+            collectives[collKey].addTransferBatch(totalTransferCount, totalTransferBytes, totalTransferTimeUs);
+        }
+
+        OTEL_TRACE(NCCL_INIT, "Synthesized AlltoAll collective: key=%s, bytes=%zu, duration=%.2f us, transfers=%d",
+                   collKey.c_str(), totalBytes, duration, totalTransferCount);
+    }
 }
 
 /**

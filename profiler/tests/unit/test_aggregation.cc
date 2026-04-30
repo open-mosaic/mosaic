@@ -1320,3 +1320,178 @@ TEST_F(WindowAggregatorTest, CudaGraphCommunicatorStillKeepsProxyTransferTiming)
     EXPECT_GT(channelIt->second.totalTimeUs, 0.0);
     EXPECT_FALSE(channelIt->second.intervals.empty());
 }
+
+// ---------------------------------------------------------------------------
+// AlltoAll collective synthesis (Phase 4)
+// Verify that P2P Send events that share a P2pApi parent are aggregated
+// into a single Collective entry by finalize().
+// ---------------------------------------------------------------------------
+TEST_F(WindowAggregatorTest, AlltoAllCollectiveSynthesis_BasicGrouping)
+{
+    // --- Communicator state for a 4-rank COLLECTIVE communicator ---
+    auto commState       = std::make_unique<CommunicatorState>();
+    commState->comm_hash = 0xABCD;
+    commState->nranks    = 4;
+    commState->rank      = 0;
+    commState->comm_type = CommunicatorState::CommType::COLLECTIVE;
+
+    // --- P2pApi marker event (AlltoAll anchor) ---
+    otelEventHandle_t p2pApiEvent = {};
+    p2pApiEvent.type              = ncclProfileP2pApi;
+    p2pApiEvent.p2pApi.func       = "AlltoAll";
+    p2pApiEvent.startTs           = 0.0;
+    p2pApiEvent.endTs             = 1.0;
+    p2pApiEvent.commState         = commState.get();
+
+    // --- P2P Send to peer=1 (non-self, parentObj = &p2pApiEvent) ---
+    otelEventHandle_t p2pSend1 = {};
+    p2pSend1.type              = ncclProfileP2p;
+    p2pSend1.p2p.func          = "Send";
+    p2pSend1.p2p.peer          = 1;
+    p2pSend1.p2p.nChannels     = 1;
+    p2pSend1.p2p.bytes         = 2048;
+    p2pSend1.startTs           = 1.0;
+    p2pSend1.endTs             = 50.0;
+    p2pSend1.parentObj         = &p2pApiEvent;
+    p2pSend1.commState         = commState.get();
+    p2pSend1.rank              = 0;
+
+    // --- P2P Send to peer=2 (non-self) ---
+    otelEventHandle_t p2pSend2 = {};
+    p2pSend2.type              = ncclProfileP2p;
+    p2pSend2.p2p.func          = "Send";
+    p2pSend2.p2p.peer          = 2;
+    p2pSend2.p2p.nChannels     = 1;
+    p2pSend2.p2p.bytes         = 2048;
+    p2pSend2.startTs           = 1.5;
+    p2pSend2.endTs             = 55.0;
+    p2pSend2.parentObj         = &p2pApiEvent;
+    p2pSend2.commState         = commState.get();
+    p2pSend2.rank              = 0;
+
+    // --- ProxyOp for p2pSend1 ---
+    otelEventHandle_t proxyOp1 = {};
+    proxyOp1.type              = ncclProfileProxyOp;
+    proxyOp1.proxyOp.peer      = 1;
+    proxyOp1.proxyOp.channelId = 0;
+    proxyOp1.proxyOp.chunkSize = 2048;
+    proxyOp1.startTs           = 2.0;
+    proxyOp1.endTs             = 80.0;  // last proxy op end for send1
+    proxyOp1.parentObj         = &p2pSend1;
+    proxyOp1.commState         = commState.get();
+    proxyOp1.rank              = 0;
+
+    // --- ProxyOp for p2pSend2 ---
+    otelEventHandle_t proxyOp2 = {};
+    proxyOp2.type              = ncclProfileProxyOp;
+    proxyOp2.proxyOp.peer      = 2;
+    proxyOp2.proxyOp.channelId = 0;
+    proxyOp2.proxyOp.chunkSize = 2048;
+    proxyOp2.startTs           = 3.0;
+    proxyOp2.endTs             = 100.0;  // last proxy op end for send2 — controls AlltoAll duration
+    proxyOp2.parentObj         = &p2pSend2;
+    proxyOp2.commState         = commState.get();
+    proxyOp2.rank              = 0;
+
+    // Feed events in buffer order: P2pApi → P2P sends → ProxyOps
+    aggregator->addEvent(p2pApiEvent);
+    aggregator->addEvent(p2pSend1);
+    aggregator->addEvent(p2pSend2);
+    aggregator->addEvent(proxyOp1);
+    aggregator->addEvent(proxyOp2);
+    aggregator->finalize();
+
+    // Expect one AlltoAll collective entry under the synthesised key
+    const auto& collectives = aggregator->getCollectives();
+    std::string expectedKey = "Comm43981_AlltoAll_4Ranks";  // comm_hash=0xABCD=43981, nranks=4
+    auto it                 = collectives.find(expectedKey);
+    ASSERT_NE(it, collectives.end()) << "AlltoAll collective key not found: " << expectedKey;
+
+    // Total bytes = 2048 (send1) + 2048 (send2) = 4096
+    EXPECT_EQ(it->second.totalBytes, 4096u);
+    // Duration = max(proxyOp2.endTs=100) - min(p2pSend1.startTs=1.0) = 99 us
+    EXPECT_NEAR(it->second.getAverageTime(), 99.0, 1e-3);
+    EXPECT_EQ(it->second.count, 1u);
+}
+
+TEST_F(WindowAggregatorTest, AlltoAllCollectiveSynthesis_NoPeerEventsYieldsNothing)
+{
+    // A P2pApi event with no P2P children should not produce any collective entry.
+    otelEventHandle_t p2pApiEvent = {};
+    p2pApiEvent.type              = ncclProfileP2pApi;
+    p2pApiEvent.p2pApi.func       = "AlltoAll";
+    p2pApiEvent.startTs           = 0.0;
+    p2pApiEvent.endTs             = 1.0;
+
+    aggregator->addEvent(p2pApiEvent);
+    aggregator->finalize();
+
+    EXPECT_TRUE(aggregator->getCollectives().empty());
+}
+
+TEST_F(WindowAggregatorTest, AlltoAllCollectiveSynthesis_NullFuncIsIgnored)
+{
+    // A P2pApi event with a NULL func should not be tracked (no collective key can be built).
+    otelEventHandle_t p2pApiEvent = {};
+    p2pApiEvent.type              = ncclProfileP2pApi;
+    p2pApiEvent.p2pApi.func       = nullptr;
+    p2pApiEvent.startTs           = 0.0;
+    p2pApiEvent.endTs             = 1.0;
+
+    otelEventHandle_t p2pSend = {};
+    p2pSend.type              = ncclProfileP2p;
+    p2pSend.p2p.func          = "Send";
+    p2pSend.p2p.peer          = 1;
+    p2pSend.p2p.nChannels     = 1;
+    p2pSend.p2p.bytes         = 1024;
+    p2pSend.startTs           = 1.0;
+    p2pSend.endTs             = 10.0;
+    p2pSend.parentObj         = &p2pApiEvent;
+
+    aggregator->addEvent(p2pApiEvent);
+    aggregator->addEvent(p2pSend);
+    aggregator->finalize();
+
+    EXPECT_TRUE(aggregator->getCollectives().empty());
+}
+
+// Explicit ncclSend/ncclRecv on a pipeline-parallel communicator (nranks==2, CommType::P2P)
+// also produces P2pApi events (the same NCCL code path as AlltoAll).  These must NOT be
+// synthesized as Collective entries — they belong to the P2P section of the dashboard.
+TEST_F(WindowAggregatorTest, AlltoAllCollectiveSynthesis_PipelineParallelStaysInP2P)
+{
+    auto commState       = std::make_unique<CommunicatorState>();
+    commState->comm_hash = 0x1234;
+    commState->nranks    = 2;
+    commState->rank      = 0;
+    commState->comm_type = CommunicatorState::CommType::P2P;  // pipeline-parallel
+
+    otelEventHandle_t p2pApiEvent = {};
+    p2pApiEvent.type              = ncclProfileP2pApi;
+    p2pApiEvent.p2pApi.func       = "Send";
+    p2pApiEvent.startTs           = 0.0;
+    p2pApiEvent.endTs             = 1.0;
+    p2pApiEvent.commState         = commState.get();
+
+    otelEventHandle_t p2pSend = {};
+    p2pSend.type              = ncclProfileP2p;
+    p2pSend.p2p.func          = "Send";
+    p2pSend.p2p.peer          = 1;
+    p2pSend.p2p.nChannels     = 1;
+    p2pSend.p2p.bytes         = 65536;
+    p2pSend.startTs           = 1.0;
+    p2pSend.endTs             = 20.0;
+    p2pSend.parentObj         = &p2pApiEvent;
+    p2pSend.commState         = commState.get();
+    p2pSend.rank              = 0;
+
+    aggregator->addEvent(p2pApiEvent);
+    aggregator->addEvent(p2pSend);
+    aggregator->finalize();
+
+    // Must NOT appear in Collective section.
+    EXPECT_TRUE(aggregator->getCollectives().empty());
+
+    // Must still appear in P2P section (the normal P2P tracking is unaffected).
+    EXPECT_FALSE(aggregator->getP2Ps().empty());
+}
