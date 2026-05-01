@@ -9,6 +9,7 @@
 #include <chrono>
 #include <map>
 #include <memory>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -34,6 +35,9 @@
 #include <opentelemetry/sdk/metrics/meter_provider.h>
 #include <opentelemetry/sdk/metrics/meter_provider_factory.h>
 #include <opentelemetry/sdk/metrics/push_metric_exporter.h>
+
+#include "telemetry_internal.h"
+#include "telemetry_primer.h"
 
 namespace metrics_api = opentelemetry::metrics;
 namespace nostd       = opentelemetry::nostd;
@@ -64,19 +68,6 @@ OTEL_PARAM(TelemetryIntervalSec, "PROFILER_OTEL_TELEMETRY_INTERVAL_SEC", 5);
 // DEFAULT: 3000
 // DESCRIPTION: Export timeout (milliseconds) for OTLP HTTP exporter/reader.
 OTEL_PARAM(TelemetryOtelBatchTimeoutMs, "PROFILER_OTEL_TELEMETRY_BATCH_TIMEOUT_MS", 3000);
-
-/**
- * @brief Get the OpenTelemetry collector endpoint URL.
- *
- * Reads from NCCL_PROFILER_OTEL_TELEMETRY_ENDPOINT environment variable.
- * The /v1/metrics path is appended in initializeOtelMetrics().
- *
- * @return Endpoint URL string (default: "http://localhost:4318").
- */
-static std::string getTelemetryEndpoint()
-{
-    return std::string(ncclParamTelemetryEndpoint());
-}
 
 // Telemetry thread state
 static std::atomic<bool> g_telThreadStop{false};
@@ -117,6 +108,19 @@ static nostd::unique_ptr<metrics_api::Histogram<double>> g_rankRateHist;
 static nostd::unique_ptr<metrics_api::Histogram<double>> g_transferSizeHist;
 static nostd::unique_ptr<metrics_api::Histogram<double>> g_transferTimeHist;
 static nostd::unique_ptr<metrics_api::Histogram<double>> g_transferLatencyHist;
+
+/**
+ * @brief Get the OpenTelemetry collector endpoint URL.
+ *
+ * Reads from NCCL_PROFILER_OTEL_TELEMETRY_ENDPOINT environment variable.
+ * The /v1/metrics path is appended in initializeOtelMetrics().
+ *
+ * @return Endpoint URL string (default: "http://localhost:4318").
+ */
+static std::string getTelemetryEndpoint()
+{
+    return std::string(ncclParamTelemetryEndpoint());
+}
 
 /**
  * @brief Initialize OpenTelemetry metrics and instruments.
@@ -215,15 +219,152 @@ static void initializeOtelMetrics()
     OTEL_TRACE(NCCL_INIT, "<== initializeOtelMetrics()");
 }
 
+// =======================================================================================
+// Metric Export Functions
+// =======================================================================================
+// The Primer state machine and orchestration logic is located in telemetry_primer.cc.
+// Primer exportation =s are dome using the generic export services of telemetry.cc.
+// =======================================================================================
+
+// =======================================================================================
+// Shared Helper Structures and Functions for Metric Export
+// =======================================================================================
+
 /**
- * @brief Export collective operation metrics to OpenTelemetry.
+ * @brief Retrieve the values of the metrics which will be exported for the standard export
+ * of a collective operation. The values are retrieved from the aggregated collective data.
+ *
+ * @param[in] coll Aggregated collective data containing statistics.
+ * @return CollectiveEmitView containing the values of the metrics to export.
+ */
+CollectiveEmitView makeStandardCollectiveEmitView(const AggregatedCollective& coll)
+{
+    return CollectiveEmitView{static_cast<double>(coll.count),
+                              static_cast<double>(coll.totalBytes),
+                              coll.totalTimeUs,
+                              coll.getAverageSize(),
+                              coll.getAverageTime(),
+                              coll.getAverageTransferCount(),
+                              coll.getAverageTransferSize(),
+                              coll.getAverageTransferTime()};
+}
+
+/**
+ * @brief Compute the eligibility of the metrics to export for the standard export
+ * of a collective operation. The eligibility is computed from the aggregated collective data.
+ *
+ * @param[in] coll Aggregated collective data containing statistics.
+ * @return CollectiveExportEligibility containing the eligibility of the metrics to export.
+ */
+CollectiveExportEligibility computeCollectiveEligibility(const AggregatedCollective& op)
+{
+    return {op.count > 0, op.getAverageTransferCount() > 0.0, op.cachedTotalTransferTimeUs > 0.0};
+}
+
+/**
+ * @brief Retrieve the values of the metrics which will be exported for the standard export
+ * of a P2P operation. The values are retrieved from the aggregated P2P data.
+ *
+ * @param[in] p2p Aggregated P2P data containing statistics.
+ * @return P2PEmitView containing the values of the metrics to export.
+ */
+P2PEmitView makeStandardP2PEmitView(const AggregatedP2P& p2p)
+{
+    return P2PEmitView{p2p.getAverageSize(), p2p.getAverageTime(), p2p.getAverageTransferCount(),
+                       p2p.getAverageTransferSize(), p2p.getAverageTransferTime()};
+}
+
+/**
+ * @brief Compute the eligibility of the metrics to export for the standard export
+ * of a P2P operation. The eligibility is computed from the aggregated P2P data.
+ *
+ * @param[in] p2p Aggregated P2P data containing statistics.
+ * @return P2PExportEligibility containing the eligibility of the metrics to export.
+ */
+P2PExportEligibility computeP2PEligibility(const AggregatedP2P& op)
+{
+    return {op.count > 0, op.getAverageTransferCount() > 0.0, op.cachedTotalTransferTimeUs > 0.0};
+}
+
+/**
+ * @brief Retrieve the values of the metrics which will be exported for the standard export
+ * of a rank transfer operation. The values are retrieved from the aggregated rank transfer data.
+ *
+ * @param[in] t Aggregated rank transfer data containing statistics.
+ * @return RankEmitView containing the values of the metrics to export.
+ */
+RankEmitView makeStandardRankEmitView(const AggregatedTransfer& t)
+{
+    double latencyUs = 0.0;
+    (void)t.getLatencyFromLinearRegression(latencyUs);
+    double rateMBps = 0.0;
+    (void)t.getRateFromActiveTime(rateMBps);
+    return RankEmitView{static_cast<uint64_t>(t.totalBytes), latencyUs, rateMBps, t.getActiveTime()};
+}
+
+/**
+ * @brief Compute the eligibility of the metrics to export for the standard export
+ * of a rank transfer operation. The eligibility is computed from the aggregated rank transfer data.
+ *
+ * @param[in] t Aggregated rank transfer data containing statistics.
+ * @return RankExportEligibility containing the eligibility of the metrics to export.
+ */
+RankExportEligibility computeRankEligibility(const AggregatedTransfer& op)
+{
+    double scratch = 0.0;
+    return RankExportEligibility{
+        op.getLatencyFromLinearRegression(scratch),
+        op.getRateFromActiveTime(scratch),
+    };
+}
+
+/**
+ * @brief Retrieve the values of the metrics which will be exported for the standard export
+ * of a transfer operation. The values are retrieved from the aggregated transfer data.
+ *
+ * @param[in] t Aggregated transfer data containing statistics.
+ * @return TransferEmitView containing the values of the metrics to export.
+ */
+TransferEmitView makeStandardTransferEmitView(const AggregatedTransfer& t)
+{
+    double latencyUs = 0.0;
+    (void)t.getLatencyFromLinearRegression(latencyUs);
+    return TransferEmitView{t.getAverageSize(), t.getAverageTime(), latencyUs};
+}
+
+/**
+ * @brief Compute the eligibility of the metrics to export for the standard export
+ * of a transfer operation. The eligibility is computed from the aggregated transfer data.
+ *
+ * @param[in] t Aggregated transfer data containing statistics.
+ * @return TransferExportEligibility containing the eligibility of the metrics to export.
+ */
+TransferExportEligibility computeTransferEligibility(const AggregatedTransfer& op)
+{
+    double scratch = 0.0;
+    return TransferExportEligibility{
+        op.count > 0,
+        op.totalTimeUs > 0.0,
+        op.getLatencyFromLinearRegression(scratch),
+    };
+}
+
+// =======================================================================================
+// Metric Export Functions
+// =======================================================================================
+
+/**
+ * @brief Export Collective operation metrics to OpenTelemetry.
  *
  * Exports aggregated collective metrics including bytes, time, transfer counts,
  * transfer sizes, and transfer times. All metrics include communicator, rank,
  * hostname, and local_rank labels.
  *
- * @param[in] key Aggregation key in format: Comm<hash>_<func>_<algo>_<proto>_<nChannels>Chnl
- * @param[in] coll Aggregated collective data containing statistics.
+ * Eligibility determines which metrics are valid to export; emit provides the values to publish.
+ *
+ * @param[in] key Aggregation key in format: Comm<hash>_<func>_Rank<X>ToRank<Y>_<nChannels>Chnl
+ * @param[in] emit Nalues to use to emit in the exported metrics
+ * @param[in] eligibility Contains decision information on wheer or not send certain metrics
  * @param[in] rank Global rank of the process.
  * @param[in] hostname Hostname of the node.
  * @param[in] local_rank Local rank within the node.
@@ -232,11 +373,14 @@ static void initializeOtelMetrics()
  * @param[in] gpu_uuid GPU UUID.
  * @param[in] comm_type Communicator type string (tensor_parallel, pipeline_parallel, unknown).
  * @param[in] nranks Number of ranks in the communicator.
+ * @param[in] scale_up_exec_mode Scale-up execution mode (cuda_graph, non_cuda_graph, or unknown).
+ * @param[in] const char* export_tag specific log message tag. Varies with the type of export requested
  */
-static void exportCollectiveMetrics(const std::string& key, const AggregatedCollective& coll, int rank,
-                                    const std::string& hostname, int local_rank, uint64_t comm_hash,
-                                    const std::string& gpu_pci_bus_id, const std::string& gpu_uuid,
-                                    const std::string& comm_type, int nranks, const std::string& scale_up_exec_mode)
+void exportCollectiveMetrics(const std::string& key, const CollectiveEmitView& emit,
+                             const CollectiveExportEligibility& eligibility, int rank, const std::string& hostname,
+                             int local_rank, uint64_t comm_hash, const std::string& gpu_pci_bus_id,
+                             const std::string& gpu_uuid, const std::string& comm_type, int nranks,
+                             const std::string& scale_up_exec_mode, [[maybe_unused]] const char* export_tag)
 {
     // Parse key to extract collective name, algo, proto, nChannels
     // Key format: Comm<hash>_<func>_<algo>_<proto>_<nChannels>Chnl
@@ -255,14 +399,13 @@ static void exportCollectiveMetrics(const std::string& key, const AggregatedColl
     }
 
     // Export collective bytes and time
-    if (coll.count > 0)
+    if (eligibility.export_core)
     {
-        double avgTime = coll.getAverageTime();
-
-        OTEL_TRACE(
-            NCCL_INIT,
-            "Exporting Collective: %s, count=%u, totalBytes=%zu, totalTime=%.2f us -> AvgBytes=%.2f, AvgTime=%.2f us",
-            key.c_str(), coll.count, coll.totalBytes, coll.totalTimeUs, coll.getAverageSize(), avgTime);
+        OTEL_TRACE(NCCL_INIT,
+                   "Exporting Collective (%s): %s, count=%.0f, totalBytes=%.0f, totalTime=%.2f us -> AvgBytes=%.2f, "
+                   "AvgTime=%.2f us",
+                   export_tag, key.c_str(), emit.count, emit.totalBytes, emit.totalTimeUs, emit.avgBytes,
+                   emit.avgTimeUs);
 
         // Create attributes for labeling
         std::map<std::string, std::string> labels = {
@@ -278,37 +421,33 @@ static void exportCollectiveMetrics(const std::string& key, const AggregatedColl
             {"scale_up_exec_mode", scale_up_exec_mode    }
         };
 
-        g_collBytesCounter->Add(coll.totalBytes, labels, opentelemetry::context::Context{});
-        g_collTimeHist->Record(avgTime, labels, opentelemetry::context::Context{});
-        g_collCountHist->Record((double)coll.count, labels, opentelemetry::context::Context{});
+        g_collBytesCounter->Add(emit.totalBytes, labels, opentelemetry::context::Context{});
+        g_collTimeHist->Record(emit.avgTimeUs, labels, opentelemetry::context::Context{});
+        g_collCountHist->Record((double)emit.count, labels, opentelemetry::context::Context{});
 
-        // Export transfer statistics (from underlying proxy operations or scale-up inference)
-        double avgNumTransfers = coll.getAverageTransferCount();
-        double avgTransferSize = coll.getAverageTransferSize();
-        double avgTransferTime = coll.getAverageTransferTime();
-
-        if (avgNumTransfers > 0)
+        if (eligibility.export_transfers)
         {
-            g_collNumTransfersHist->Record(avgNumTransfers, labels, opentelemetry::context::Context{});
-            g_collTransferSizeHist->Record(avgTransferSize, labels, opentelemetry::context::Context{});
+            g_collNumTransfersHist->Record(emit.avgNumTransfers, labels, opentelemetry::context::Context{});
+            g_collTransferSizeHist->Record(emit.avgTransferSize, labels, opentelemetry::context::Context{});
             // Only export transfer time when aggregation produced real timing data.
             // CUDA-graph scale-up volume-only paths intentionally leave this at 0,
             // while scale-out proxy paths still carry actual ProxyStep timing even
             // if the communicator is tagged as cuda_graph.
-            if (coll.cachedTotalTransferTimeUs > 0.0)
+            if (eligibility.export_transfer_time)
             {
-                g_collTransferTimeHist->Record(avgTransferTime, labels, opentelemetry::context::Context{});
+                g_collTransferTimeHist->Record(emit.avgTransferTime, labels, opentelemetry::context::Context{});
             }
 
             OTEL_TRACE(NCCL_INIT,
-                       "Exported Collective: %s, AvgBytes: %.2f, AvgTime: %.2f us, "
+                       "Exported Collective (%s): %s, AvgBytes: %.2f, AvgTime: %.2f us, "
                        "AvgNumTransfers: %.2f, AvgTransferSize: %.2f, AvgTransferTime: %.2f us",
-                       key.c_str(), coll.getAverageSize(), avgTime, avgNumTransfers, avgTransferSize, avgTransferTime);
+                       export_tag, key.c_str(), emit.avgBytes, emit.avgTimeUs, emit.avgNumTransfers,
+                       emit.avgTransferSize, emit.avgTransferTime);
         }
         else
         {
-            OTEL_TRACE(NCCL_INIT, "Exported Collective: %s, AvgBytes: %.2f, AvgTime: %.2f us (no transfers)",
-                       key.c_str(), coll.getAverageSize(), avgTime);
+            OTEL_TRACE(NCCL_INIT, "Exported Collective (%s): %s, AvgBytes: %.2f, AvgTime: %.2f us (no transfers)",
+                       export_tag, key.c_str(), emit.avgBytes, emit.avgTimeUs);
         }
     }
 }
@@ -320,8 +459,11 @@ static void exportCollectiveMetrics(const std::string& key, const AggregatedColl
  * transfer sizes, and transfer times. All metrics include communicator, rank,
  * hostname, and local_rank labels.
  *
+ * Eligibility determines which metrics are valid to export; emit provides the values to publish.
+ *
  * @param[in] key Aggregation key in format: Comm<hash>_<func>_Rank<X>ToRank<Y>_<nChannels>Chnl
- * @param[in] p2p Aggregated P2P data containing statistics.
+ * @param[in] emit Nalues to use to emit in the exported metrics
+ * @param[in] eligibility Contains decision information on wheer or not send certain metrics
  * @param[in] rank Global rank of the process.
  * @param[in] hostname Hostname of the node.
  * @param[in] local_rank Local rank within the node.
@@ -330,11 +472,13 @@ static void exportCollectiveMetrics(const std::string& key, const AggregatedColl
  * @param[in] gpu_uuid GPU UUID.
  * @param[in] comm_type Communicator type string (tensor_parallel, pipeline_parallel, unknown).
  * @param[in] nranks Number of ranks in the communicator.
+ * @param[in] scale_up_exec_mode Scale-up execution mode (cuda_graph, non_cuda_graph, or unknown).
+ * @param[in] const char* export_tag specific log message tag. Varies with the type of export requested
  */
-static void exportP2PMetrics(const std::string& key, const AggregatedP2P& p2p, int rank, const std::string& hostname,
-                             int local_rank, uint64_t comm_hash, const std::string& gpu_pci_bus_id,
-                             const std::string& gpu_uuid, const std::string& comm_type, int nranks,
-                             const std::string& scale_up_exec_mode)
+void exportP2PMetrics(const std::string& key, const P2PEmitView& emit, const P2PExportEligibility& eligibility,
+                      int rank, const std::string& hostname, int local_rank, uint64_t comm_hash,
+                      const std::string& gpu_pci_bus_id, const std::string& gpu_uuid, const std::string& comm_type,
+                      int nranks, const std::string& scale_up_exec_mode, [[maybe_unused]] const char* export_tag)
 {
     // Parse key to extract function name and pipeline info
     // P2P Key format: Comm<hash>_(<hostname>)_<func>_Pipeline<src>ToPipeline<dst>_<nChannels>Chnl
@@ -387,11 +531,8 @@ static void exportP2PMetrics(const std::string& key, const AggregatedP2P& p2p, i
     std::string operation = func_name + " Pipeline" + src_pipeline + "→Pipeline" + dst_pipeline + rank_info;
 
     // Export P2P bytes and time
-    if (p2p.count > 0)
+    if (eligibility.export_core)
     {
-        double avgBytes = (double)p2p.totalBytes / p2p.count;
-        double avgTime  = p2p.totalTimeUs / p2p.count;
-
         // Create attributes for labeling
         std::map<std::string, std::string> labels = {
             {"communicator",       communicator          },
@@ -406,33 +547,29 @@ static void exportP2PMetrics(const std::string& key, const AggregatedP2P& p2p, i
             {"scale_up_exec_mode", scale_up_exec_mode    }
         };
 
-        g_p2pBytesHist->Record(avgBytes, labels, opentelemetry::context::Context{});
-        g_p2pTimeHist->Record(avgTime, labels, opentelemetry::context::Context{});
+        g_p2pBytesHist->Record(emit.avgBytes, labels, opentelemetry::context::Context{});
+        g_p2pTimeHist->Record(emit.avgTimeUs, labels, opentelemetry::context::Context{});
 
-        // Export transfer statistics (from underlying proxy operations)
-        double avgNumTransfers = p2p.getAverageTransferCount();
-        double avgTransferSize = p2p.getAverageTransferSize();
-        double avgTransferTime = p2p.getAverageTransferTime();
-
-        if (avgNumTransfers > 0)
+        if (eligibility.export_transfers)
         {
-            g_p2pNumTransfersHist->Record(avgNumTransfers, labels, opentelemetry::context::Context{});
-            g_p2pTransferSizeHist->Record(avgTransferSize, labels, opentelemetry::context::Context{});
+            g_p2pNumTransfersHist->Record(emit.avgNumTransfers, labels, opentelemetry::context::Context{});
+            g_p2pTransferSizeHist->Record(emit.avgTransferSize, labels, opentelemetry::context::Context{});
             // Same policy as collectives: suppress only when no timing data exists.
-            if (p2p.cachedTotalTransferTimeUs > 0.0)
+            if (eligibility.export_transfer_time)
             {
-                g_p2pTransferTimeHist->Record(avgTransferTime, labels, opentelemetry::context::Context{});
+                g_p2pTransferTimeHist->Record(emit.avgTransferTime, labels, opentelemetry::context::Context{});
             }
 
             OTEL_TRACE(NCCL_INIT,
-                       "Exported P2P: %s, AvgBytes: %.2f, AvgTime: %.2f us, "
+                       "Exported P2P (%s): %s, AvgBytes: %.2f, AvgTime: %.2f us, "
                        "AvgNumTransfers: %.2f, AvgTransferSize: %.2f, AvgTransferTime: %.2f us",
-                       key.c_str(), avgBytes, avgTime, avgNumTransfers, avgTransferSize, avgTransferTime);
+                       export_tag, key.c_str(), emit.avgBytes, emit.avgTimeUs, emit.avgNumTransfers,
+                       emit.avgTransferSize, emit.avgTransferTime);
         }
         else
         {
-            OTEL_TRACE(NCCL_INIT, "Exported P2P: %s, AvgBytes: %.2f, AvgTime: %.2f us (no transfers)", key.c_str(),
-                       avgBytes, avgTime);
+            OTEL_TRACE(NCCL_INIT, "Exported P2P (%s): %s, AvgBytes: %.2f, AvgTime: %.2f us (no transfers)", export_tag,
+                       key.c_str(), emit.avgBytes, emit.avgTimeUs);
         }
     }
 }
@@ -440,30 +577,37 @@ static void exportP2PMetrics(const std::string& key, const AggregatedP2P& p2p, i
 /**
  * @brief Export rank-to-rank transfer metrics to OpenTelemetry.
  *
- * Exports aggregated transfer metrics between ranks including total bytes,
- * latency (from linear regression), and transfer rate (from active transfer time).
+ * Exports aggregated transfer metrics between ranks: total bytes (always), optional latency
+ * (linear regression), and optional rate (from merged active transfer intervals). All metrics
+ * use communicator, source_rank, dest_rank, hostname, and related labels.
  *
- * Rate calculation: The rate is computed as totalBytes / activeTime where activeTime
- * is the merged (union) of all transfer intervals - representing the time during which
- * at least one transfer was in progress between this rank pair. This approach assumes
- * that parallel transfers share the available bandwidth, so the rate represents the
- * actual bandwidth utilization between two ranks.
+ * Rate calculation: rate is totalBytes / activeTime, where activeTime is the union of transfer
+ * intervals (at least one transfer in progress). Parallel transfers are assumed to share bandwidth.
  *
- * Metrics include communicator, source_rank, dest_rank, and hostname labels.
+ * The eligibility argument is derived from the aggregated window data (for example
+ * computeRankEligibility): it selects whether latency and rate series are meaningful to export.
+ * The emit argument carries the values actually recorded; for a primer pass, emit is zeros while
+ * eligibility still reflects the merged aggregation so Prometheus series align with the eventual
+ * real export.
  *
- * @param[in] key Aggregation key in format: Comm<hash>_Rank<X>ToRank<Y>
- * @param[in] transferRef Aggregated transfer data containing statistics.
- * @param[in] rank Global rank of the process (unused, extracted from key).
+ * @param[in] key Aggregation key in format: Comm<hash>_Rank<X>ToRank<Y> (collective) or
+ *                Comm<hash>_<hostname>_Pipeline<src>_ToPipeline<peer> (P2P pipeline).
+ * @param[in] emit Values published for bytes, latency, rate, and trace fields (may be zeros for primer).
+ * @param[in] eligibility Which optional series to export (latency, rate); bytes counter is always emitted.
+ * @param[in] rank Global rank of the process (unused; rank context comes from key / local_rank).
  * @param[in] hostname Hostname of the node.
  * @param[in] gpu_pci_bus_id GPU PCI BUS ID.
  * @param[in] gpu_uuid GPU UUID.
  * @param[in] comm_type Communicator type string (tensor_parallel, pipeline_parallel, unknown).
  * @param[in] nranks Number of ranks in the communicator.
+ * @param[in] local_rank Local rank within the node (used when labeling pipeline keys).
+ * @param[in] scale_up_exec_mode Scale-up execution mode (cuda_graph, non_cuda_graph, or unknown).
+ * @param[in] export_tag Log label for traces (e.g. "STANDARD", "PRIMER") when tracing is enabled.
  */
-static void exportRankMetrics(const std::string& key, const AggregatedTransfer& transferRef, int rank,
-                              const std::string& hostname, const std::string& gpu_pci_bus_id,
-                              const std::string& gpu_uuid, const std::string& comm_type, int nranks, int local_rank,
-                              const std::string& scale_up_exec_mode)
+void exportRankMetrics(const std::string& key, const RankEmitView& emit, const RankExportEligibility& eligibility,
+                       int rank, const std::string& hostname, const std::string& gpu_pci_bus_id,
+                       const std::string& gpu_uuid, const std::string& comm_type, int nranks, int local_rank,
+                       const std::string& scale_up_exec_mode, [[maybe_unused]] const char* export_tag)
 {
     (void)rank;  // Unused - rank info is parsed from key or derived from local_rank
     std::string communicator = "";
@@ -523,54 +667,62 @@ static void exportRankMetrics(const std::string& key, const AggregatedTransfer& 
         {"scale_up_exec_mode", scale_up_exec_mode        }
     };
 
-    // Export rank bytes
-    g_rankBytesCounter->Add(transferRef.totalBytes, labels, opentelemetry::context::Context{});
+    g_rankBytesCounter->Add(emit.totalBytes, labels, opentelemetry::context::Context{});
 
-    // Export rank latency (from linear regression)
-    double latencyUs;
-    if (transferRef.getLatencyFromLinearRegression(latencyUs))
+    if (eligibility.export_latency)
     {
-        g_rankLatencyHist->Record(latencyUs, labels, opentelemetry::context::Context{});
-        OTEL_TRACE(NCCL_INIT, "Exported Rank Latency: %s, Latency: %.2f us", key.c_str(), latencyUs);
+        g_rankLatencyHist->Record(emit.latencyUs, labels, opentelemetry::context::Context{});
+        OTEL_TRACE(NCCL_INIT, "Exported Rank Latency (%s): %s, Latency: %.2f us", export_tag, key.c_str(),
+                   emit.latencyUs);
     }
 
-    // Export rank rate (from active transfer time - merged intervals)
-    // This represents the actual bandwidth between ranks by measuring total bytes
-    // transferred divided by the time during which at least one transfer was active.
-    double rateMBps;
-    if (transferRef.getRateFromActiveTime(rateMBps))
+    if (eligibility.export_rate)
     {
-        g_rankRateHist->Record(rateMBps, labels, opentelemetry::context::Context{});
-        OTEL_TRACE(NCCL_INIT, "Exported Rank Rate: %s, Bytes: %zu, ActiveTime: %.2f us, Rate: %.2f MB/s", key.c_str(),
-                   transferRef.totalBytes, transferRef.getActiveTime(), rateMBps);
+        g_rankRateHist->Record(emit.rateMBps, labels, opentelemetry::context::Context{});
+        OTEL_TRACE(NCCL_INIT, "Exported Rank Rate (%s): %s, Bytes: %llu, ActiveTime: %.2f us, Rate: %.2f MB/s",
+                   export_tag, key.c_str(), static_cast<unsigned long long>(emit.totalBytes), emit.activeTimeUs,
+                   emit.rateMBps);
     }
     else
     {
-        OTEL_TRACE(NCCL_INIT, "Exported Rank Metrics: %s, Bytes: %zu (no rate data)", key.c_str(),
-                   transferRef.totalBytes);
+        OTEL_TRACE(NCCL_INIT, "Exported Rank Metrics (%s): %s, Bytes: %llu (no rate data)", export_tag, key.c_str(),
+                   static_cast<unsigned long long>(emit.totalBytes));
     }
 }
 
 /**
  * @brief Export per-channel transfer metrics to OpenTelemetry.
  *
- * Exports aggregated transfer metrics per communicator, rank pair, and channel
- * including average transfer size, average transfer time, and latency (from
- * linear regression). Metrics include communicator, source_rank, dest_rank, channel, and hostname labels.
+ * Exports aggregated metrics per communicator, rank pair, and channel: average transfer size,
+ * optional average transfer time, and optional latency from linear regression. Labels include
+ * communicator, source_rank, dest_rank, channel, hostname, and related fields.
  *
- * @param[in] key Aggregation key in format: Comm<hash>_Rank<X>ToRank<Y>_Chnl<channelId>
- * @param[in] transferRef Aggregated transfer data containing statistics.
- * @param[in] rank Global rank of the process (unused, extracted from key).
+ * When eligibility.export_channel_metrics is false (no transfers in the aggregation for this key),
+ * the function returns after parsing the key and emits no histograms.
+ *
+ * Eligibility encodes whether channel metrics, average-time histogram, and latency histogram should
+ * be exported, based on the aggregated transfer state. Emit holds the values recorded (primer flows
+ * use zero emit views with the same eligibility policy as real exports).
+ *
+ * @param[in] key Aggregation key in format: Comm<hash>_Rank<X>ToRank<Y>_Chnl<channelId> or
+ *                Comm<hash>_<hostname>_Pipeline<src>_ToPipeline<peer>_Chnl<id> (P2P pipeline).
+ * @param[in] emit Average size/time and latency value to record (zeros for primer when used).
+ * @param[in] eligibility Gates channel block, avg-time series, and latency series.
+ * @param[in] rank Global rank of the process (unused; context from key / local_rank).
  * @param[in] hostname Hostname of the node.
  * @param[in] gpu_pci_bus_id GPU PCI BUS ID.
  * @param[in] gpu_uuid GPU UUID.
  * @param[in] comm_type Communicator type string (tensor_parallel, pipeline_parallel, unknown).
  * @param[in] nranks Number of ranks in the communicator.
+ * @param[in] local_rank Local rank within the node (used when labeling pipeline keys).
+ * @param[in] scale_up_exec_mode Scale-up execution mode (cuda_graph, non_cuda_graph, or unknown).
+ * @param[in] export_tag Log label for traces (e.g. "STANDARD", "PRIMER") when tracing is enabled.
  */
-static void exportTransferMetrics(const std::string& key, const AggregatedTransfer& transferRef, int rank,
-                                  const std::string& hostname, const std::string& gpu_pci_bus_id,
-                                  const std::string& gpu_uuid, const std::string& comm_type, int nranks, int local_rank,
-                                  const std::string& scale_up_exec_mode)
+void exportTransferMetrics(const std::string& key, const TransferEmitView& emit,
+                           const TransferExportEligibility& eligibility, int rank, const std::string& hostname,
+                           const std::string& gpu_pci_bus_id, const std::string& gpu_uuid, const std::string& comm_type,
+                           int nranks, int local_rank, const std::string& scale_up_exec_mode,
+                           [[maybe_unused]] const char* export_tag)
 {
     (void)rank;  // Unused - rank info is parsed from key or derived from local_rank
     std::string communicator = "";
@@ -634,12 +786,8 @@ static void exportTransferMetrics(const std::string& key, const AggregatedTransf
         channel = key.substr(chnl_pos + 5);
     }
 
-    if (transferRef.count > 0)
+    if (eligibility.export_channel_metrics)
     {
-        double avgSize = transferRef.getAverageSize();
-        double avgTime = transferRef.getAverageTime();
-
-        // Create attributes for labeling
         std::map<std::string, std::string> labels = {
             {"communicator",       communicator              },
             {"source_rank",        source_rank               },
@@ -654,25 +802,23 @@ static void exportTransferMetrics(const std::string& key, const AggregatedTransf
             {"scale_up_exec_mode", scale_up_exec_mode        }
         };
 
-        g_transferSizeHist->Record(avgSize, labels, opentelemetry::context::Context{});
-        if (transferRef.totalTimeUs > 0.0)
+        g_transferSizeHist->Record(emit.avgSize, labels, opentelemetry::context::Context{});
+        if (eligibility.export_avg_time)
         {
-            g_transferTimeHist->Record(avgTime, labels, opentelemetry::context::Context{});
+            g_transferTimeHist->Record(emit.avgTime, labels, opentelemetry::context::Context{});
         }
 
-        // Export transfer latency (from linear regression)
-        double latencyUs;
-        if (transferRef.getLatencyFromLinearRegression(latencyUs))
+        if (eligibility.export_latency)
         {
-            g_transferLatencyHist->Record(latencyUs, labels, opentelemetry::context::Context{});
+            g_transferLatencyHist->Record(emit.latencyUs, labels, opentelemetry::context::Context{});
 
-            OTEL_TRACE(NCCL_INIT, "Exported Transfer: %s, AvgSize: %.2f, AvgTime: %.2f us, Latency: %.2f us",
-                       key.c_str(), avgSize, avgTime, latencyUs);
+            OTEL_TRACE(NCCL_INIT, "Exported Transfer (%s): %s, AvgSize: %.2f, AvgTime: %.2f us, Latency: %.2f us",
+                       export_tag, key.c_str(), emit.avgSize, emit.avgTime, emit.latencyUs);
         }
         else
         {
-            OTEL_TRACE(NCCL_INIT, "Exported Transfer: %s, AvgSize: %.2f, AvgTime: %.2f us", key.c_str(), avgSize,
-                       avgTime);
+            OTEL_TRACE(NCCL_INIT, "Exported Transfer (%s): %s, AvgSize: %.2f, AvgTime: %.2f us", export_tag,
+                       key.c_str(), emit.avgSize, emit.avgTime);
         }
     }
 }
@@ -727,41 +873,118 @@ static void processWindow(CommunicatorState* commState, int window_idx)
     // Finalize aggregation - calculates correct Coll/P2P durations based on ProxyOp completion
     aggregator.finalize();
 
-    // Export Collective Information
-    const auto& collectives = aggregator.getCollectives();
+    // Process metrics with primer algorithm (orchestration logic in telemetry_primer.cc)
+    // The primer algorithm fixes three key grafane displayissues:
+    // 1. Duplication of operation name labels for the same operation.
+    // 2. Operation name present but with no associated metric values
+    // 3. Zero transfer times not being exported causing missing Grafana series
+
+    // Process pending primers from previous windows and increase metrics values of the pending operations
+    // by one window's worth of metrics.
+    // Get the aggregated data for the operations.
+    const auto& collectives      = aggregator.getCollectives();
+    const auto& p2ps             = aggregator.getP2Ps();
+    const auto& rankTransfers    = aggregator.getRankTransfers();
+    const auto& channelTransfers = aggregator.getChannelTransfers();
+
+    // Process the Collective pending primers.
+    auto handledCollectives = processPendingCollectivePrimers(commState, collectives);
+
+    // Process the P2P pending primers.
+    auto handledP2Ps = processPendingP2PPrimers(commState, p2ps);
+
+    // Process the Rank pending primers.
+    auto handledRankTransfers = processPendingRankPrimers(commState, rankTransfers);
+
+    // Process the Transfer pending primers.
+    auto handledChannelTransfers = processPendingTransferPrimers(commState, channelTransfers);
+
+    // Export Collective Information for those out of pending primers state.
     for (const auto& pair : collectives)
     {
-        exportCollectiveMetrics(pair.first, pair.second, commState->rank, commState->hostname, commState->local_rank,
-                                commState->comm_hash, commState->gpu_pci_bus_id, commState->gpu_uuid,
-                                commState->getCommTypeString(), commState->nranks,
-                                commState->getScaleUpExecModeString());
+        if (handledCollectives.count(pair.first)) continue;  // Already handled by pending primer
+
+        // Check if primer cycle already complete for this key. If so, export the metrics.
+        if (isCollectivePrimerDone(commState, pair.first))
+        {
+            const AggregatedCollective& coll        = pair.second;
+            CollectiveExportEligibility eligibility = computeCollectiveEligibility(coll);
+            CollectiveEmitView emit                 = makeStandardCollectiveEmitView(coll);
+            exportCollectiveMetrics(pair.first, emit, eligibility, commState->rank, commState->hostname,
+                                    commState->local_rank, commState->comm_hash, commState->gpu_pci_bus_id,
+                                    commState->gpu_uuid, commState->getCommTypeString(), commState->nranks,
+                                    commState->getScaleUpExecModeString(), "STANDARD");
+        }
+        else
+        {
+            // A new key/Collective operarion  has been detected. Register it for primer processing in next window.
+            registerCollectivePrimer(commState, pair.first, pair.second);
+        }
     }
 
-    // Export P2P Information
-    const auto& p2ps = aggregator.getP2Ps();
+    // Export P2P Information for those out of pending primers state.
     for (const auto& pair : p2ps)
     {
-        exportP2PMetrics(pair.first, pair.second, commState->rank, commState->hostname, commState->local_rank,
-                         commState->comm_hash, commState->gpu_pci_bus_id, commState->gpu_uuid,
-                         commState->getCommTypeString(), commState->nranks, commState->getScaleUpExecModeString());
+        if (handledP2Ps.count(pair.first)) continue;
+
+        if (isP2PPrimerDone(commState, pair.first))
+        {
+            const AggregatedP2P& p2p = pair.second;
+            // Exporter-owned decisions
+            P2PExportEligibility eligibility = computeP2PEligibility(p2p);
+            // STANDARD emission uses real values
+            P2PEmitView emit = makeStandardP2PEmitView(p2p);
+            exportP2PMetrics(pair.first, emit, eligibility, commState->rank, commState->hostname, commState->local_rank,
+                             commState->comm_hash, commState->gpu_pci_bus_id, commState->gpu_uuid,
+                             commState->getCommTypeString(), commState->nranks, commState->getScaleUpExecModeString(),
+                             "STANDARD");
+        }
+        else
+        {
+            registerP2PPrimer(commState, pair.first, pair.second);
+        }
     }
 
     // Export Rank Information
-    const auto& rankTransfers = aggregator.getRankTransfers();
     for (const auto& pair : rankTransfers)
     {
-        exportRankMetrics(pair.first, pair.second, commState->rank, commState->hostname, commState->gpu_pci_bus_id,
-                          commState->gpu_uuid, commState->getCommTypeString(), commState->nranks, commState->local_rank,
-                          commState->getScaleUpExecModeString());
+        if (handledRankTransfers.count(pair.first)) continue;
+
+        if (isRankPrimerDone(commState, pair.first))
+        {
+            const AggregatedTransfer& xfer    = pair.second;
+            RankExportEligibility eligibility = computeRankEligibility(xfer);
+            RankEmitView emit                 = makeStandardRankEmitView(xfer);
+            exportRankMetrics(pair.first, emit, eligibility, commState->rank, commState->hostname,
+                              commState->gpu_pci_bus_id, commState->gpu_uuid, commState->getCommTypeString(),
+                              commState->nranks, commState->local_rank, commState->getScaleUpExecModeString(),
+                              "STANDARD");
+        }
+        else
+        {
+            registerRankPrimer(commState, pair.first, pair.second);
+        }
     }
 
     // Export Transfer Information
-    const auto& channelTransfers = aggregator.getChannelTransfers();
     for (const auto& pair : channelTransfers)
     {
-        exportTransferMetrics(pair.first, pair.second, commState->rank, commState->hostname, commState->gpu_pci_bus_id,
-                              commState->gpu_uuid, commState->getCommTypeString(), commState->nranks,
-                              commState->local_rank, commState->getScaleUpExecModeString());
+        if (handledChannelTransfers.count(pair.first)) continue;
+
+        if (isTransferPrimerDone(commState, pair.first))
+        {
+            const AggregatedTransfer& xfer        = pair.second;
+            TransferExportEligibility eligibility = computeTransferEligibility(xfer);
+            TransferEmitView emit                 = makeStandardTransferEmitView(xfer);
+            exportTransferMetrics(pair.first, emit, eligibility, commState->rank, commState->hostname,
+                                  commState->gpu_pci_bus_id, commState->gpu_uuid, commState->getCommTypeString(),
+                                  commState->nranks, commState->local_rank, commState->getScaleUpExecModeString(),
+                                  "STANDARD");
+        }
+        else
+        {
+            registerTransferPrimer(commState, pair.first, pair.second);
+        }
     }
 
     // Transition window back to READY state
