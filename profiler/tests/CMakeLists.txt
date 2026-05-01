@@ -10,6 +10,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Linux-only build: define NCCL_OS_LINUX unconditionally.
+# Required because nccl_profiler.h includes os.h, which gates
+# ncclSocketDescriptor / ncclAffinity / ncclPid_t behind NCCL_OS_LINUX.
+add_compile_definitions(NCCL_OS_LINUX)
+
 # GPU Platform selection: CUDA, ROCM, or AUTO (default: AUTO)
 if(NOT DEFINED GPU_PLATFORM)
     set(GPU_PLATFORM "AUTO")

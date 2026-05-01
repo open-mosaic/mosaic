@@ -19,6 +19,11 @@ endif()
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -O3")
 set(CMAKE_CXX_FLAGS_DEBUG "-g")
 
+# Linux-only build: define NCCL_OS_LINUX unconditionally.
+# Required because nccl_profiler.h includes os.h, which gates
+# ncclSocketDescriptor / ncclAffinity behind NCCL_OS_LINUX.
+add_compile_definitions(NCCL_OS_LINUX)
+
 # GPU Platform selection: CUDA, ROCM, or AUTO (default: AUTO)
 if(NOT DEFINED GPU_PLATFORM)
     set(GPU_PLATFORM "AUTO")
@@ -265,6 +270,7 @@ SET(OTEL_SOURCES
   profiler_otel.cc
   profiler_v4_compat.cc
   telemetry.cc
+  telemetry_primer.cc
 )
 
 # Create shared library

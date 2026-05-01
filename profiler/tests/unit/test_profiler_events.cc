@@ -634,3 +634,31 @@ TEST_F(ProfilerEventTest, KernelChTracksInProgressCount)
     profiler_otel_stop_event_v5(kcHandle);
     EXPECT_EQ(window->kernel_ch_in_progress.load(), before);
 }
+
+// KernelCh events with NULL parentObj must be filtered.
+// These arise from P2P Recv sub-operations: our plugin returns NULL eHandle for Recv
+// events, so NCCL stores NULL as the task event handle, and uses it as parentObj for
+// the KernelCh.  If we allocate a slot and increment kernel_ch_in_progress for these,
+// the window may process before their stop_event arrives, producing an endTs=0 warning.
+TEST_F(ProfilerEventTest, KernelChWithNullParentIsSkipped)
+{
+    struct eventContext* ctx     = (struct eventContext*)context;
+    CommunicatorState* commState = ctx->commState;
+    uint8_t bufIdx               = commState->get_active_buffer_idx();
+    WindowMetadata* window       = commState->get_window_metadata(bufIdx);
+
+    uint32_t kernel_ch_before = window->kernel_ch_in_progress.load();
+    uint32_t count_before     = window->element_count.load();
+
+    // Attempt to start a KernelCh with NULL parentObj (simulates a Recv sub-op KernelCh).
+    auto kcDescr        = makeKernelChDescr(0, nullptr);  // parentObj = NULL
+    void* kcHandle      = nullptr;
+    ncclResult_t result = profiler_otel_start_event_v5(context, &kcHandle, &kcDescr);
+
+    EXPECT_EQ(result, ncclSuccess);
+    EXPECT_EQ(kcHandle, nullptr);  // Must be filtered (no slot allocated)
+
+    // kernel_ch_in_progress and element_count must be unchanged.
+    EXPECT_EQ(window->kernel_ch_in_progress.load(), kernel_ch_before);
+    EXPECT_EQ(window->element_count.load(), count_before);
+}

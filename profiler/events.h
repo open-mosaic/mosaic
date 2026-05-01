@@ -86,6 +86,12 @@ typedef struct
         {
             // KernelLaunch: no per-event payload; timing is captured in startTs/endTs.
         } kernelLaunch;
+        struct
+        {
+            // P2pApi: carries the original collective function name (e.g., "AlltoAll").
+            // Used as a grouping parent for P2P tasks decomposed from a collective call.
+            const char* func;
+        } p2pApi;
     };
 } otelEventHandle_t;
 
