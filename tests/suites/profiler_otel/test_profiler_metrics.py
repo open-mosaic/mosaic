@@ -88,7 +88,8 @@ class TestNCCLProfilerTelemetry:
         :suite: profiler_otel
         :description: Verify NCCL profiler metrics are exported to Prometheus after
             running vLLM inference. Triggers NCCL operations via inference, then
-            queries Prometheus for all metrics defined in telemetry.cc.
+            queries Prometheus for the workload-specific expected metric set from
+            conftest (NCCL_PROFILER_METRICS_EXPECTED_*).
         """
 
         workload.start()
