@@ -61,7 +61,7 @@ NCCL_PROFILER_METRICS = [
     "nccl_profiler_transfer_latency_microseconds_sum",  # Histogram (us)
 ]
 
-# Expected Prometheus series per workload (subset of NCCL_PROFILER_METRICS); order matches catalog.
+# Expected metrics based on workload type.
 NCCL_PROFILER_METRICS_EXPECTED_PROMPT_WORKLOAD = (
     "nccl_profiler_collective_bytes_total",
     "nccl_profiler_collective_time_microseconds_sum",
@@ -86,10 +86,6 @@ NCCL_PROFILER_METRICS_EXPECTED_INFERENCEX_WORKLOAD = (
     "nccl_profiler_transfer_latency_microseconds_sum",
 )
 
-_nccl_catalog = frozenset(NCCL_PROFILER_METRICS)
-assert frozenset(NCCL_PROFILER_METRICS_EXPECTED_PROMPT_WORKLOAD) <= _nccl_catalog
-assert frozenset(NCCL_PROFILER_METRICS_EXPECTED_INFERENCEX_WORKLOAD) <= _nccl_catalog
-
 
 def expected_nccl_profiler_metrics(workload) -> list[str]:
     """Return the NCCL profiler metric names we assert on for this workload type."""
@@ -103,14 +99,6 @@ def expected_nccl_profiler_metrics(workload) -> list[str]:
 # =============================================================================
 # OTEL Stack Fixtures
 # =============================================================================
-
-
-@pytest.fixture
-def nccl_profiler_metrics(workload) -> list[str]:
-    """
-    NCCL profiler metric names expected in Prometheus for the parametrized workload.
-    """
-    return expected_nccl_profiler_metrics(workload)
 
 
 @pytest.fixture(scope="session")
