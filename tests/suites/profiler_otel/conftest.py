@@ -62,7 +62,7 @@ NCCL_PROFILER_METRICS = [
 ]
 
 # Expected metrics based on workload type.
-NCCL_PROFILER_METRICS_EXPECTED_PROMPT_WORKLOAD = (
+NCCL_PROFILER_METRICS_EXPECTED_PROMPT_WORKLOAD = [
     "nccl_profiler_collective_bytes_total",
     "nccl_profiler_collective_time_microseconds_sum",
     "nccl_profiler_collective_count_sum",
@@ -71,9 +71,9 @@ NCCL_PROFILER_METRICS_EXPECTED_PROMPT_WORKLOAD = (
     "nccl_profiler_rank_bytes_total",
     "nccl_profiler_transfer_size_bytes_sum",
     "nccl_profiler_transfer_time_microseconds_sum",
-)
+]
 
-NCCL_PROFILER_METRICS_EXPECTED_INFERENCEX_WORKLOAD = (
+NCCL_PROFILER_METRICS_EXPECTED_INFERENCEX_WORKLOAD = [
     "nccl_profiler_collective_bytes_total",
     "nccl_profiler_collective_time_microseconds_sum",
     "nccl_profiler_collective_count_sum",
@@ -84,15 +84,15 @@ NCCL_PROFILER_METRICS_EXPECTED_INFERENCEX_WORKLOAD = (
     "nccl_profiler_transfer_size_bytes_sum",
     "nccl_profiler_transfer_time_microseconds_sum",
     "nccl_profiler_transfer_latency_microseconds_sum",
-)
+]
 
 
 def expected_nccl_profiler_metrics(workload) -> list[str]:
     """Return the NCCL profiler metric names we assert on for this workload type."""
     if isinstance(workload, PromptWorkload):
-        return list(NCCL_PROFILER_METRICS_EXPECTED_PROMPT_WORKLOAD)
+        return NCCL_PROFILER_METRICS_EXPECTED_PROMPT_WORKLOAD
     if isinstance(workload, InferencexWorkload):
-        return list(NCCL_PROFILER_METRICS_EXPECTED_INFERENCEX_WORKLOAD)
+        return NCCL_PROFILER_METRICS_EXPECTED_INFERENCEX_WORKLOAD
     raise TypeError(f"Unsupported workload type: {type(workload)!r}")
 
 
