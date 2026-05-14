@@ -4,6 +4,8 @@
 #ifndef OTEL_TELEMETRY_INTERNAL_H_
 #define OTEL_TELEMETRY_INTERNAL_H_
 
+struct CommunicatorState;
+
 /**
  * @file telemetry_internal.h
  * @brief Internal telemetry API shared by telemetry.cc and telemetry_primer.cc when
@@ -15,10 +17,18 @@
 
 #ifdef ENABLE_OTEL
 
+#include <opentelemetry/metrics/meter.h>
+#include <opentelemetry/metrics/meter_provider.h>
+#include <opentelemetry/nostd/shared_ptr.h>
+#include <opentelemetry/nostd/unique_ptr.h>
+
 #include <cstdint>
 #include <string>
 
 #include "aggregation.h"
+
+namespace metrics_api = opentelemetry::metrics;
+namespace nostd       = opentelemetry::nostd;
 
 // =======================================================================================
 // Shared Helper Structures
@@ -124,39 +134,58 @@ TransferExportEligibility computeTransferEligibility(const AggregatedTransfer& o
 // Primer zero-value export helpers live only in telemetry_primer.cc (file-local).
 // =======================================================================================
 
-/**
- * @brief Export collective operation metrics (real values).
- */
+extern nostd::shared_ptr<metrics_api::MeterProvider> g_meterProvider;
+extern nostd::shared_ptr<metrics_api::Meter> g_meter;
+
+extern nostd::unique_ptr<metrics_api::Counter<uint64_t>> g_collBytesCounter;
+extern nostd::unique_ptr<metrics_api::Histogram<double>> g_collTimeHist;
+extern nostd::unique_ptr<metrics_api::Histogram<double>> g_collCountHist;
+extern nostd::unique_ptr<metrics_api::Histogram<double>> g_collNumTransfersHist;
+extern nostd::unique_ptr<metrics_api::Histogram<double>> g_collTransferSizeHist;
+extern nostd::unique_ptr<metrics_api::Histogram<double>> g_collTransferTimeHist;
+
+extern nostd::unique_ptr<metrics_api::Histogram<double>> g_p2pBytesHist;
+extern nostd::unique_ptr<metrics_api::Histogram<double>> g_p2pTimeHist;
+extern nostd::unique_ptr<metrics_api::Histogram<double>> g_p2pNumTransfersHist;
+extern nostd::unique_ptr<metrics_api::Histogram<double>> g_p2pTransferSizeHist;
+extern nostd::unique_ptr<metrics_api::Histogram<double>> g_p2pTransferTimeHist;
+
+extern nostd::unique_ptr<metrics_api::Counter<uint64_t>> g_rankBytesCounter;
+extern nostd::unique_ptr<metrics_api::Histogram<double>> g_rankLatencyHist;
+extern nostd::unique_ptr<metrics_api::Histogram<double>> g_rankRateHist;
+
+extern nostd::unique_ptr<metrics_api::Histogram<double>> g_transferSizeHist;
+extern nostd::unique_ptr<metrics_api::Histogram<double>> g_transferTimeHist;
+extern nostd::unique_ptr<metrics_api::Histogram<double>> g_transferLatencyHist;
+
 void exportCollectiveMetrics(const std::string& key, const CollectiveEmitView& emit,
                              const CollectiveExportEligibility& eligibility, int rank, const std::string& hostname,
                              int local_rank, uint64_t comm_hash, const std::string& gpu_pci_bus_id,
                              const std::string& gpu_uuid, const std::string& comm_type, int nranks,
                              const std::string& scale_up_exec_mode, const char* export_tag);
 
-/**
- * @brief Export P2P operation metrics (real values).
- */
 void exportP2PMetrics(const std::string& key, const P2PEmitView& emit, const P2PExportEligibility& eligibility,
                       int rank, const std::string& hostname, int local_rank, uint64_t comm_hash,
                       const std::string& gpu_pci_bus_id, const std::string& gpu_uuid, const std::string& comm_type,
                       int nranks, const std::string& scale_up_exec_mode, const char* export_tag);
 
-/**
- * @brief Export rank transfer metrics (real values).
- */
 void exportRankMetrics(const std::string& key, const RankEmitView& emit, const RankExportEligibility& eligibility,
                        int rank, const std::string& hostname, const std::string& gpu_pci_bus_id,
                        const std::string& gpu_uuid, const std::string& comm_type, int nranks, int local_rank,
                        const std::string& scale_up_exec_mode, const char* export_tag);
 
-/**
- * @brief Export channel transfer metrics (real values).
- */
 void exportTransferMetrics(const std::string& key, const TransferEmitView& emit,
                            const TransferExportEligibility& eligibility, int rank, const std::string& hostname,
                            const std::string& gpu_pci_bus_id, const std::string& gpu_uuid, const std::string& comm_type,
                            int nranks, int local_rank, const std::string& scale_up_exec_mode, const char* export_tag);
 
+void processWindow(CommunicatorState* commState, int window_idx);
+
 #endif  // ENABLE_OTEL
+
+void telemetryRuntimeInit();
+void telemetryRuntimeCleanup();
+void telemetryRuntimeNotifyWindowReady(CommunicatorState* commState, int window_idx);
+void telemetryRuntimeUnregisterCommunicator(CommunicatorState* commState);
 
 #endif  // OTEL_TELEMETRY_INTERNAL_H_

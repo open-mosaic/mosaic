@@ -12,82 +12,14 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <map>
-#include <mutex>
 #include <string>
 
 #include "communicator_state.h"
-
-// =============================================================================
-// Global GPU ID to Rank Map
-// =============================================================================
-// Maps GPU identifier (PCI bus ID) to the correct rank within the pipeline.
-// Populated from COLLECTIVE communicators (nNodes=1) where rank == GPU index.
-// Used by P2P communicators to look up the correct local_rank.
-static std::map<std::string, int> g_gpu_id_to_rank;
-static std::mutex g_gpu_rank_map_mutex;
 #include "events.h"
 #include "param.h"
+#include "profiler_otel_lifecycle.h"
+#include "profiler_runtime_state.h"
 #include "telemetry.h"
-
-// =============================================================================
-// GPU Platform Abstraction Layer
-// Provides unified API for CUDA and ROCm/HIP
-// =============================================================================
-
-#if defined(GPU_PLATFORM_ROCM)
-// ROCm/HIP platform
-#include <hip/hip_runtime.h>
-
-// Type aliases for HIP
-using gpuError_t    = hipError_t;
-using gpuDeviceProp = hipDeviceProp_t;
-
-// HIP's UUID is in hipDeviceProp_t as hipUUID (char[16] or similar structure)
-// Define a compatible UUID type
-struct gpuUUID_t
-{
-    char bytes[16];
-};
-
-// Error codes
-#define gpuSuccess hipSuccess
-
-// Function mappings
-#define gpuGetDevice           hipGetDevice
-#define gpuGetDeviceProperties hipGetDeviceProperties
-#define gpuDeviceGetPCIBusId   hipDeviceGetPCIBusId
-#define gpuGetErrorString      hipGetErrorString
-
-// Platform name for logging
-#define GPU_PLATFORM_NAME "ROCm/HIP"
-
-#else
-// CUDA platform (default)
-#include <cuda_runtime.h>
-
-// Type aliases for CUDA
-using gpuError_t    = cudaError_t;
-using gpuDeviceProp = cudaDeviceProp;
-using gpuUUID_t     = cudaUUID_t;
-
-// Error codes
-#define gpuSuccess             cudaSuccess
-
-// Function mappings
-#define gpuGetDevice           cudaGetDevice
-#define gpuGetDeviceProperties cudaGetDeviceProperties
-#define gpuDeviceGetPCIBusId   cudaDeviceGetPCIBusId
-#define gpuGetErrorString      cudaGetErrorString
-
-// Platform name for logging
-#define GPU_PLATFORM_NAME      "CUDA"
-
-#endif  // GPU_PLATFORM_ROCM
-
-// =============================================================================
-// End of GPU Platform Abstraction Layer
-// =============================================================================
 
 /**
  * @brief Get the size in bytes of an NCCL datatype.
@@ -108,37 +40,6 @@ static size_t ncclTypeSize(const char* datatype)
         strcmp(datatype, "ncclFloat64") == 0)
         return 8;
     return 0;  // Unknown type
-}
-
-/**
- * @brief Convert GPU UUID to standard UUID string format.
- *
- * Converts a gpuUUID_t struct to a human-readable UUID string in the format:
- * xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx (8-4-4-4-12 hexadecimal digits).
- *
- * @param[in] uuid GPU UUID structure (cudaUUID_t on CUDA, gpuUUID_t on ROCm).
- *
- * @return UUID string in standard format, or "unknown" if conversion fails.
- */
-static std::string gpuUuidToString(const gpuUUID_t& uuid)
-{
-    char uuid_str[64];
-    // uuid.bytes is const char*, cast to unsigned char* for proper formatting
-    const unsigned char* uuid_bytes = reinterpret_cast<const unsigned char*>(uuid.bytes);
-    // Cast each byte to unsigned int to match %02x format specifier
-    int result =
-        snprintf(uuid_str, sizeof(uuid_str), "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
-                 (unsigned int)uuid_bytes[0], (unsigned int)uuid_bytes[1], (unsigned int)uuid_bytes[2],
-                 (unsigned int)uuid_bytes[3], (unsigned int)uuid_bytes[4], (unsigned int)uuid_bytes[5],
-                 (unsigned int)uuid_bytes[6], (unsigned int)uuid_bytes[7], (unsigned int)uuid_bytes[8],
-                 (unsigned int)uuid_bytes[9], (unsigned int)uuid_bytes[10], (unsigned int)uuid_bytes[11],
-                 (unsigned int)uuid_bytes[12], (unsigned int)uuid_bytes[13], (unsigned int)uuid_bytes[14],
-                 (unsigned int)uuid_bytes[15]);
-    if (result < 0 || result >= (int)sizeof(uuid_str))
-    {
-        return "unknown";
-    }
-    return std::string(uuid_str);
 }
 
 /**
@@ -309,82 +210,18 @@ static __attribute__((unused)) const char* getParentChain(void* parentObj, Commu
 }
 #endif
 
-static int initialized;  // initialization counter for profiler
-static double startTime;
-
-ncclDebugLogger_t otel_log_func = nullptr;
-static pthread_mutex_t otelLock = PTHREAD_MUTEX_INITIALIZER;
-static pid_t pid;
-
-// Atomic counters for telemetry init/cleanup management
-static int telemetry_initialized =
-    0;                                // Track if telemetry has been initialized (0 = not initialized, >0 = initialized)
-static int active_communicators = 0;  // Track number of active communicators
-
-// Test interface functions for unit testing
-#ifdef UNIT_TESTING
-int getInitialized()
-{
-    return initialized;
-}
-void setInitialized(int value)
-{
-    initialized = value;
-}
-double getStartTime()
-{
-    return startTime;
-}
-void setStartTime(double value)
-{
-    startTime = value;
-}
-pid_t getPid()
-{
-    return pid;
-}
-void setPid(pid_t value)
-{
-    pid = value;
-}
-
 // Test wrapper for ncclTypeSize (static function)
+#ifdef UNIT_TESTING
 size_t test_ncclTypeSize(const char* datatype)
 {
     return ncclTypeSize(datatype);
 }
-
-// Test wrapper for gpuUuidToString that takes raw bytes (avoids GPU platform dependency)
-std::string test_gpuUuidToString(const unsigned char* uuid_bytes)
-{
-    gpuUUID_t uuid;
-    memcpy(uuid.bytes, uuid_bytes, 16);
-    return gpuUuidToString(uuid);
-}
 #endif  // UNIT_TESTING
-
-// PARAM: EnableOTEL
-// ENV: NCCL_PROFILER_OTEL_ENABLE
-// DEFAULT: 1
-// DESCRIPTION: Master enable/disable switch for the profiler plugin (0 disables plugin).
-OTEL_PARAM(EnableOTEL, "PROFILER_OTEL_ENABLE", 1);
-// PARAM: ProfileEventMask
-// ENV: NCCL_PROFILE_EVENT_MASK
-// DEFAULT: -1 (use internal default)
-// DESCRIPTION: Override NCCL profiler activation mask; if unset, plugin uses 0x85E
-//              (Coll+P2P+ProxyOp+ProxyStep+KernelCh+KernelLaunch).
-OTEL_PARAM(ProfileEventMask, "PROFILE_EVENT_MASK", -1);
-// PARAM: WindowTimeoutIntervalSec
-// ENV: NCCL_PROFILER_OTEL_TELEMETRY_INTERVAL_SEC
-// DEFAULT: 5
-// DESCRIPTION: Window timeout used for time-based window closing (seconds). Kept in this TU so unit tests do not need
-// to link telemetry.cc.
-OTEL_PARAM(WindowTimeoutIntervalSec, "PROFILER_OTEL_TELEMETRY_INTERVAL_SEC", 5);
 // PARAM: LinearRegressionMode
 // ENV: NCCL_PROFILER_LINEAR_REGRESSION_MODE
-// DEFAULT: MIN
+// DEFAULT: AVG
 // DESCRIPTION: Linear regression mode for latency/rate estimation. Supported: MIN, AVG.
-OTEL_STRING_PARAM(LinearRegressionMode, "PROFILER_LINEAR_REGRESSION_MODE", "MIN");
+OTEL_STRING_PARAM(LinearRegressionMode, "PROFILER_LINEAR_REGRESSION_MODE", "AVG");
 // PARAM: ScaleUpNetworkPct
 // ENV: NCCL_PROFILER_OTEL_SCALEUP_NETWORK_PCT
 // DEFAULT: 100
@@ -476,218 +313,11 @@ OTEL_HIDDEN ncclResult_t profiler_otel_init_v5(void** context, uint64_t commId, 
                                                const char* commName, int nNodes, int nranks, int rank,
                                                ncclDebugLogger_t logfn)
 {
-    // Store the log function provided by NCCL
     otel_log_func = logfn ? logfn : fallback_log;
 
     OTEL_TRACE(NCCL_INIT, "Plugin initialized(commName=%s, nNodes=%d, nranks=%d, rank=%d)", commName, nNodes, nranks,
                rank);
-
-    int enable = OTEL_GET_PARAM(EnableOTEL);
-    OTEL_TRACE(NCCL_INIT, "Checking enable parameter: NCCL_PROFILER_OTEL_ENABLE=%d", enable);
-    if (enable == 0)
-    {
-        OTEL_WARN(NCCL_INIT, "Plugin disabled by environment variable NCCL_PROFILER_OTEL_ENABLE=0");
-        *context = nullptr;  // Explicitly set context to nullptr when disabled
-        return ncclSuccess;
-    }
-
-    static int localActivationMask = 0;  // Will hold the event mask determined by the first call
-
-    pthread_mutex_lock(&otelLock);
-    if (__atomic_fetch_add(&initialized, 1, __ATOMIC_RELAXED) == 0)
-    {
-        // First thread/process calculates the activation mask
-        int64_t envMask = OTEL_GET_PARAM(ProfileEventMask);
-        // Default mask: enable telemetry-relevant events
-        // 0x85E = Coll + P2p + ProxyOp + ProxyStep + KernelCh + KernelLaunch
-        localActivationMask = (envMask >= 0) ? (int)envMask : 0x85E;
-
-        OTEL_INFO(NCCL_INIT, "Event activation mask set to 0x%x", localActivationMask);
-
-        // Pid of the process initializing the plugin first.
-        pid = getpid();
-
-        startTime = gettime();
-    }
-    // Always assign the actual event mask to the caller's pointer
-    __atomic_store_n(eActivationMask, localActivationMask, __ATOMIC_RELAXED);
-
-    pthread_mutex_unlock(&otelLock);
-
-    struct eventContext* ctx = (struct eventContext*)calloc(1, sizeof(*ctx));
-    ctx->commName            = commName;
-    ctx->commHash            = commId;
-    ctx->nNodes              = nNodes;
-    ctx->nranks              = nranks;
-    ctx->rank                = rank;
-
-    // Create circular buffer state for this communicator
-    ctx->commState            = new CommunicatorState();
-    ctx->commState->comm_name = commName;
-    ctx->commState->comm_hash = commId;
-    ctx->commState->nNodes    = nNodes;
-    ctx->commState->nranks    = nranks;
-    ctx->commState->rank      = rank;
-    ctx->commState->commName  = commName ? std::string(commName) : std::string("");
-
-    // Get hostname
-    char hostname_buf[256];
-    if (gethostname(hostname_buf, sizeof(hostname_buf)) == 0)
-    {
-        ctx->commState->hostname = std::string(hostname_buf);
-    }
-    else
-    {
-        ctx->commState->hostname = "unknown";
-    }
-
-    // Get GPU PCI BUS ID and UUID from GPU runtime (CUDA or ROCm/HIP)
-    // Note: GPU runtime should be initialized by NCCL/RCCL at this point, but handle errors gracefully
-    int gpu_device_id  = -1;
-    gpuError_t gpu_err = gpuGetDevice(&gpu_device_id);
-    if (gpu_err == gpuSuccess && gpu_device_id >= 0)
-    {
-        // Get device properties
-        gpuDeviceProp device_prop;
-        gpu_err = gpuGetDeviceProperties(&device_prop, gpu_device_id);
-        if (gpu_err == gpuSuccess)
-        {
-            // Get PCI BUS ID as string
-            char pci_bus_id_str[256];
-            gpu_err = gpuDeviceGetPCIBusId(pci_bus_id_str, sizeof(pci_bus_id_str), gpu_device_id);
-            if (gpu_err == gpuSuccess)
-            {
-                ctx->commState->gpu_pci_bus_id = std::string(pci_bus_id_str);
-            }
-            else
-            {
-                ctx->commState->gpu_pci_bus_id = "unknown";
-                OTEL_WARN(NCCL_INIT, "Failed to get PCI Bus ID for device %d: %s", gpu_device_id,
-                          gpuGetErrorString(gpu_err));
-            }
-
-            // Convert UUID to string format
-#if defined(GPU_PLATFORM_ROCM)
-            // ROCm/HIP: Copy UUID bytes from hipDeviceProp_t
-            // HIP stores UUID differently - use gcnArchName or hdpMemFlushCntl as fallback
-            // For now, construct a pseudo-UUID from device properties
-            gpuUUID_t hip_uuid;
-            memset(&hip_uuid, 0, sizeof(hip_uuid));
-            // Use PCI bus ID as a unique identifier since HIP UUID handling varies by version
-            if (ctx->commState->gpu_pci_bus_id != "unknown")
-            {
-                // Hash the PCI bus ID into UUID bytes
-                const char* pci_str = ctx->commState->gpu_pci_bus_id.c_str();
-                for (size_t i = 0; i < 16 && pci_str[i] != '\0'; ++i)
-                {
-                    hip_uuid.bytes[i] = pci_str[i];
-                }
-            }
-            ctx->commState->gpu_uuid = gpuUuidToString(hip_uuid);
-#else
-            // CUDA: Use the UUID from device properties directly
-            ctx->commState->gpu_uuid = gpuUuidToString(device_prop.uuid);
-#endif
-
-            OTEL_TRACE(NCCL_INIT, GPU_PLATFORM_NAME " device: id=%d, PCI_BUS_ID=%s, UUID=%s", gpu_device_id,
-                       ctx->commState->gpu_pci_bus_id.c_str(), ctx->commState->gpu_uuid.c_str());
-        }
-        else
-        {
-            ctx->commState->gpu_pci_bus_id = "unknown";
-            ctx->commState->gpu_uuid       = "unknown";
-            OTEL_WARN(NCCL_INIT, "Failed to get " GPU_PLATFORM_NAME " device properties for device %d: %s",
-                      gpu_device_id, gpuGetErrorString(gpu_err));
-        }
-    }
-    else
-    {
-        // GPU runtime may not be initialized or available - this is acceptable for some configurations
-        ctx->commState->gpu_pci_bus_id = "unknown";
-        ctx->commState->gpu_uuid       = "unknown";
-        OTEL_TRACE(NCCL_INIT,
-                   GPU_PLATFORM_NAME " device not available: %s (this may be normal if GPU runtime is not initialized)",
-                   gpuGetErrorString(gpu_err));
-    }
-
-    // Determine local_rank (GPU index within the node)
-    // Strategy:
-    // - COLLECTIVE comms (nranks > 2): rank == GPU index, cache in GPU ID → rank map
-    // - P2P comms (nranks == 2): look up from GPU ID → rank map
-    // - Fallback: use provided rank
-
-    if (nranks > 2)
-    {
-        // COLLECTIVE communicator: rank is the GPU index
-        // Cache GPU ID → rank mapping for P2P communicators
-        ctx->commState->local_rank = rank;
-        ctx->commState->comm_type  = CommunicatorState::CommType::COLLECTIVE;
-        if (!ctx->commState->gpu_pci_bus_id.empty() && ctx->commState->gpu_pci_bus_id != "unknown")
-        {
-            std::lock_guard<std::mutex> lock(g_gpu_rank_map_mutex);
-            g_gpu_id_to_rank[ctx->commState->gpu_pci_bus_id] = rank;
-            OTEL_TRACE(NCCL_INIT, "COLLECTIVE: Cached GPU %s → rank %d", ctx->commState->gpu_pci_bus_id.c_str(), rank);
-        }
-        OTEL_TRACE(NCCL_INIT, "COLLECTIVE (nranks=%d): local_rank = rank = %d", nranks, ctx->commState->local_rank);
-    }
-    else
-    {
-        // P2P communicator (nranks == 2): always classified as P2P regardless of context.
-        // This covers both pipeline-parallel communicators in LLM training and standalone
-        // send/recv scenario.  The GPU→rank map is consulted only for local_rank resolution
-        // (which GPU slot this rank occupies within the node); comm_type is set unconditionally.
-        ctx->commState->comm_type = CommunicatorState::CommType::P2P;
-
-        bool found = false;
-        if (!ctx->commState->gpu_pci_bus_id.empty() && ctx->commState->gpu_pci_bus_id != "unknown")
-        {
-            std::lock_guard<std::mutex> lock(g_gpu_rank_map_mutex);
-            auto it = g_gpu_id_to_rank.find(ctx->commState->gpu_pci_bus_id);
-            if (it != g_gpu_id_to_rank.end())
-            {
-                ctx->commState->local_rank = it->second;
-                found                      = true;
-                OTEL_TRACE(NCCL_INIT, "P2P: Found GPU %s → rank %d from map", ctx->commState->gpu_pci_bus_id.c_str(),
-                           ctx->commState->local_rank);
-            }
-        }
-
-        if (!found)
-        {
-            // Map not yet populated (e.g. standalone sendrecv test with no prior collective comm).
-            // Fall back to the provided rank as best estimate for local_rank.
-            ctx->commState->local_rank = rank;
-            OTEL_TRACE(NCCL_INIT, "P2P: GPU ID not in map, using rank=%d as local_rank (GPU=%s)", rank,
-                       ctx->commState->gpu_pci_bus_id.c_str());
-        }
-    }
-
-    // Set window timeout from telemetry interval (convert seconds to microseconds)
-    int interval_sec = (int)OTEL_GET_PARAM(WindowTimeoutIntervalSec);
-    if (interval_sec <= 0) interval_sec = 5;
-    ctx->commState->window_timeout_usec = interval_sec * 1e6;
-    OTEL_INFO(NCCL_INIT, "Window timeout set to %d seconds (%.0f us)", interval_sec,
-              ctx->commState->window_timeout_usec);
-
-    OTEL_INFO(
-        NCCL_INIT,
-        "Created communicator state: name=%s, hash=%lu, rank=%d, nranks=%d, nNodes=%d, hostname=%s, local_rank=%d, "
-        "gpu_pci_bus_id=%s, gpu_uuid=%s, comm_type=%s",
-        commName, commId, rank, nranks, nNodes, ctx->commState->hostname.c_str(), ctx->commState->local_rank,
-        ctx->commState->gpu_pci_bus_id.c_str(), ctx->commState->gpu_uuid.c_str(), ctx->commState->getCommTypeString());
-
-    *context = ctx;
-
-    // Start telemetry only on first communicator initialization
-    if (__atomic_fetch_add(&telemetry_initialized, 1, __ATOMIC_RELAXED) == 0)
-    {
-        profiler_otel_telemetry_init();
-    }
-
-    // Increment active communicator count
-    __atomic_fetch_add(&active_communicators, 1, __ATOMIC_RELAXED);
-
-    return ncclSuccess;
+    return initializeProfilerContext(context, commId, eActivationMask, commName, nNodes, nranks, rank);
 }
 
 /**
@@ -772,10 +402,10 @@ OTEL_HIDDEN ncclResult_t profiler_otel_start_event_v5(void* context, void** eHan
     // whether the plugin requested it. These waste circular buffer slots and produce
     // zombie events (endTs=0) if not filtered here before allocation.
     //
-    // Exception: ncclProfileP2pApi is NOT filtered — it carries the original collective
-    // function name (e.g., "AlltoAll") and serves as the grouping parent for P2P tasks
-    // that are decomposed from a collective call.  Tracking it allows the aggregator to
-    // synthesize a single Collective metric entry for AlltoAll operations.
+    // Exception: ncclProfileP2pApi is NOT filtered — NCCL emits one such marker per
+    // decomposed P2P sub-operation. Current AlltoAll traces produce multiple P2pApi
+    // markers per call, so the aggregator reconstructs AlltoAll from the surrounding
+    // Group fan-out pattern rather than from the P2pApi handle or func string.
     if (type == ncclProfileGroupApi || type == ncclProfileCollApi || type == ncclProfileNetPlugin)
     {
         return ncclSuccess;
@@ -796,10 +426,20 @@ OTEL_HIDDEN ncclResult_t profiler_otel_start_event_v5(void* context, void** eHan
         buffer_idx = ctx->commState->get_active_buffer_idx();
     }
 
-    // Get a new event handle from the circular buffer
+    // Get a new event handle from the circular buffer.
+    // Most child events route by their parent window. P2P fan-out inside an active Group
+    // is special: route those starts by the active Group handle instead of the per-peer
+    // P2pApi marker so one AlltoAll call stays in one window.
+    void* allocation_parent = eDescr->parentObj;
+    if (type == ncclProfileP2p)
+    {
+        void* active_group = ctx->commState->active_group_handle.load(std::memory_order_acquire);
+        if (active_group) allocation_parent = active_group;
+    }
+
     // Pass parentObj so allocation can route to correct window (parent's window if parent exists)
     // Pass current_time for time-based window closing checks
-    otelEventHandle_t* otel_event = get_next_event_handle(ctx->commState, eDescr->parentObj, current_time);
+    otelEventHandle_t* otel_event = get_next_event_handle(ctx->commState, allocation_parent, current_time);
     if (!otel_event)
     {
         OTEL_WARN(NCCL_INIT, "Failed to get event handle from circular buffer. Dropping event.");
@@ -945,6 +585,8 @@ OTEL_HIDDEN ncclResult_t profiler_otel_start_event_v5(void* context, void** eHan
     {
         // Group events: required to return a valid handle, because they can appear in the parent chain.
         // We don't export metrics for Group events, but we do use them for window management.
+        ctx->commState->active_group_handle.store(otel_event, std::memory_order_release);
+        ctx->commState->active_group_depth.fetch_add(1, std::memory_order_acq_rel);
         ctx->commState->mark_operation_start(buffer_idx);
         ctx->commState->windows[buffer_idx].groups_in_progress.fetch_add(1, std::memory_order_acq_rel);
         OTEL_TRACE(NCCL_INIT, "Started Group [eHandle=%p] (pending ops+=1, groups+=1)", otel_event);
@@ -988,13 +630,12 @@ OTEL_HIDDEN ncclResult_t profiler_otel_start_event_v5(void* context, void** eHan
     }
     else if (type == ncclProfileP2pApi)
     {
-        // Store the original collective function name (e.g., "AlltoAll").
-        // This event acts as a grouping anchor for the individual P2P Send tasks
-        // that NCCL emits when decomposing a collective such as AlltoAll into P2P ops.
+        // NCCL emits one P2pApi marker per decomposed P2P sub-operation.
+        // It is useful for trace inspection but not a reliable AlltoAll grouping key.
         // No window management (in_progress tracking) is needed for this marker event.
         otel_event->p2pApi.func = eDescr->p2pApi.func;
-        OTEL_TRACE(NCCL_INIT, "Stored P2pApi marker [eHandle=%p], func=%s (AlltoAll collective grouping anchor)",
-                   otel_event, eDescr->p2pApi.func ? eDescr->p2pApi.func : "NULL");
+        OTEL_TRACE(NCCL_INIT, "Stored P2pApi marker [eHandle=%p], func=%s (per-peer decomposed-op marker)", otel_event,
+                   eDescr->p2pApi.func ? eDescr->p2pApi.func : "NULL");
     }
     else
     {
@@ -1036,6 +677,13 @@ OTEL_HIDDEN ncclResult_t profiler_otel_stop_event_v5(void* eHandle)
     {
         if (otel_event->commState)
         {
+            uint32_t prev_group_depth =
+                otel_event->commState->active_group_depth.fetch_sub(1, std::memory_order_acq_rel);
+            if (prev_group_depth <= 1)
+            {
+                otel_event->commState->active_group_handle.store(nullptr, std::memory_order_release);
+            }
+
             uint8_t buf_idx = otel_event->buffer_idx;
             otel_event->commState->mark_operation_complete(buf_idx);
 
@@ -1437,28 +1085,6 @@ OTEL_HIDDEN ncclResult_t profiler_otel_record_event_state_v5(void* eHandle, nccl
 OTEL_HIDDEN ncclResult_t profiler_otel_finalize_v5(void* context)
 {
     OTEL_TRACE(NCCL_INIT, "===> profiler_otel_finalize(context=%p)", context);
-    struct eventContext* ctx = (struct eventContext*)context;
-
-    // Destroy communicator state
-    if (ctx && ctx->commState)
-    {
-        OTEL_INFO(NCCL_INIT, "Destroying communicator state: name=%s, hash=%lu", ctx->commState->comm_name,
-                  ctx->commState->comm_hash);
-        delete ctx->commState;
-        ctx->commState = nullptr;
-    }
-
-    free(ctx);
-
-    // Decrement active communicator count and cleanup telemetry only when last communicator is finalized
-    int remaining = __atomic_sub_fetch(&active_communicators, 1, __ATOMIC_ACQ_REL);
-    if (remaining == 0)
-    {
-        profiler_otel_telemetry_cleanup();
-        // Reset telemetry_initialized so it can be re-initialized if needed
-        __atomic_store_n(&telemetry_initialized, 0, __ATOMIC_RELEASE);
-    }
-
-    return ncclSuccess;
+    return finalizeProfilerContext(context);
 }
 // end NCCL Profiler Plugin v5

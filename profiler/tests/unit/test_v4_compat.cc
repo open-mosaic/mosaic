@@ -31,8 +31,6 @@ protected:
         unsetenv("NCCL_PROFILE_EVENT_MASK");
         resetProfilerState();
     }
-
-    void TearDown() override {}
 };
 
 TEST_F(V4CompatInitTest, SuccessfulInit)

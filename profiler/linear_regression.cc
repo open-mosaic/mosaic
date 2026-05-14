@@ -3,21 +3,34 @@
 
 #include "linear_regression.h"
 
-#include <numeric>  // For std::accumulate
-#include <set>      // For std::set
+#include <algorithm>
 
-LinearRegression::LinearRegression(Mode mode) : mode_(mode), sumX(0.0), sumY(0.0), sumXY(0.0), sumX2(0.0), n(0) {}
+/**
+ * @brief Construct a LinearRegression accumulator.
+ *
+ * @param[in] mode Regression mode controlling how points are retained.
+ */
+LinearRegression::LinearRegression(Mode mode)
+    : mode_(mode), sumX(0.0), sumY(0.0), sumXY(0.0), sumX2(0.0), sumY2(0.0), n(0)
+{
+}
 
+/**
+ * @brief Add a transfer sample to the regression state.
+ *
+ * @param[in] x Transfer size in bytes.
+ * @param[in] y Transfer time in microseconds.
+ */
 void LinearRegression::addPoint(double x, double y)
 {
     if (mode_ == Mode::AVG)
     {
-        // Original behavior: use all points
-        dataPoints.push_back({x, y});
+        uniqueSizes.insert(x);
         sumX += x;
         sumY += y;
         sumXY += x * y;
         sumX2 += x * x;
+        sumY2 += y * y;
         n++;
     }
     else if (mode_ == Mode::MIN)
@@ -32,6 +45,7 @@ void LinearRegression::addPoint(double x, double y)
             sumY += y;
             sumXY += x * y;
             sumX2 += x * x;
+            sumY2 += y * y;
             n++;
         }
         else if (y < it->second)
@@ -43,25 +57,29 @@ void LinearRegression::addPoint(double x, double y)
             // Update sums: subtract old contribution, add new
             sumY  = sumY - oldY + y;
             sumXY = sumXY - x * oldY + x * y;
+            sumY2 = sumY2 - oldY * oldY + y * y;
             // sumX and sumX2 don't change since x is the same
         }
         // If y >= current min, do nothing (keep existing minimum)
     }
 }
 
+/**
+ * @brief Merge samples from another accumulator.
+ *
+ * @param[in] other Source accumulator to merge into this one.
+ */
 void LinearRegression::merge(const LinearRegression& other)
 {
     if (mode_ == Mode::AVG)
     {
-        // Original behavior: merge all statistics
         sumX += other.sumX;
         sumY += other.sumY;
         sumXY += other.sumXY;
         sumX2 += other.sumX2;
+        sumY2 += other.sumY2;
         n += other.n;
-
-        // Merge data points (for potential future use)
-        dataPoints.insert(dataPoints.end(), other.dataPoints.begin(), other.dataPoints.end());
+        uniqueSizes.insert(other.uniqueSizes.begin(), other.uniqueSizes.end());
     }
     else if (mode_ == Mode::MIN)
     {
@@ -80,6 +98,7 @@ void LinearRegression::merge(const LinearRegression& other)
                 sumY += time;
                 sumXY += size * time;
                 sumX2 += size * size;
+                sumY2 += time * time;
                 n++;
             }
             else if (time < it->second)
@@ -91,23 +110,36 @@ void LinearRegression::merge(const LinearRegression& other)
                 // Update sums
                 sumY  = sumY - oldTime + time;
                 sumXY = sumXY - size * oldTime + size * time;
+                sumY2 = sumY2 - oldTime * oldTime + time * time;
             }
             // If time >= current min, do nothing
         }
     }
 }
 
+/**
+ * @brief Reset the accumulator to an empty state.
+ */
 void LinearRegression::clear()
 {
-    dataPoints.clear();
+    uniqueSizes.clear();
     minTimesPerSize.clear();
     sumX  = 0.0;
     sumY  = 0.0;
     sumXY = 0.0;
     sumX2 = 0.0;
+    sumY2 = 0.0;
     n     = 0;
 }
 
+/**
+ * @brief Compute the least-squares slope and intercept.
+ *
+ * @param[out] slope Transfer-time slope in microseconds per byte.
+ * @param[out] intercept Estimated fixed latency in microseconds.
+ *
+ * @return true when at least two non-degenerate points are available.
+ */
 bool LinearRegression::calculate(double& slope, double& intercept) const
 {
     if (n < 2)
@@ -132,16 +164,15 @@ bool LinearRegression::calculate(double& slope, double& intercept) const
     return true;
 }
 
+/**
+ * @brief Check whether the accumulator has at least three unique sizes.
+ *
+ * @return true when enough size diversity exists for latency estimation.
+ */
 bool LinearRegression::hasAtLeastThreeDifferentSizes() const
 {
     if (mode_ == Mode::AVG)
     {
-        // Count unique X values in dataPoints
-        std::set<double> uniqueSizes;
-        for (const auto& point : dataPoints)
-        {
-            uniqueSizes.insert(point.first);
-        }
         return uniqueSizes.size() >= 3;
     }
     else if (mode_ == Mode::MIN)
@@ -152,6 +183,13 @@ bool LinearRegression::hasAtLeastThreeDifferentSizes() const
     return false;
 }
 
+/**
+ * @brief Compute the R-squared goodness-of-fit value.
+ *
+ * @param[out] rSquared Coefficient of determination for the fitted line.
+ *
+ * @return true when the regression and fit statistics were computed.
+ */
 bool LinearRegression::calculateRSquared(double& rSquared) const
 {
     if (n < 2)
@@ -167,42 +205,24 @@ bool LinearRegression::calculateRSquared(double& rSquared) const
         return false;
     }
 
-    // Calculate total sum of squares (TSS) and residual sum of squares (RSS)
-    double yMean = sumY / n;
-    double tss   = 0.0;  // Total sum of squares
-    double rss   = 0.0;  // Residual sum of squares
-
-    // Use the appropriate data source based on mode
-    if (mode_ == Mode::AVG)
+    const double count = static_cast<double>(n);
+    const double sxx   = sumX2 - (sumX * sumX) / count;
+    if (sxx == 0.0)
     {
-        for (const auto& point : dataPoints)
-        {
-            double x          = point.first;
-            double y          = point.second;
-            double yPredicted = intercept + slope * x;
-            tss += (y - yMean) * (y - yMean);
-            rss += (y - yPredicted) * (y - yPredicted);
-        }
-    }
-    else if (mode_ == Mode::MIN)
-    {
-        for (const auto& pair : minTimesPerSize)
-        {
-            double x          = pair.first;
-            double y          = pair.second;
-            double yPredicted = intercept + slope * x;
-            tss += (y - yMean) * (y - yMean);
-            rss += (y - yPredicted) * (y - yPredicted);
-        }
+        rSquared = 0.0;
+        return false;
     }
 
-    if (tss == 0.0)
+    const double syy = sumY2 - (sumY * sumY) / count;
+    if (syy == 0.0)
     {
         // All y values are the same - perfect fit for constant function
         rSquared = 1.0;
         return true;
     }
 
-    rSquared = 1.0 - (rss / tss);
+    const double sxy = sumXY - (sumX * sumY) / count;
+    rSquared         = (sxy * sxy) / (sxx * syy);
+    rSquared         = std::min(1.0, std::max(0.0, rSquared));
     return true;
 }

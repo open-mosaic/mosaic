@@ -13,6 +13,20 @@
 // KernelCh (bit 6) and NetPlugin (bit 7) are the highest v4 knows about.
 static constexpr int V4_EVENT_MASK = 0xFF;
 
+/**
+ * @brief Initialize the profiler through the v4 compatibility entry point.
+ *
+ * @param[out] context Pointer that receives the profiler context.
+ * @param[out] eActivationMask Activation mask returned to NCCL v4.
+ * @param[in] commName Communicator display name.
+ * @param[in] commHash Communicator unique identifier.
+ * @param[in] nNodes Number of nodes in the communicator.
+ * @param[in] nranks Number of ranks in the communicator.
+ * @param[in] rank Rank of the current process.
+ * @param[in] logfn NCCL logger callback.
+ *
+ * @return ncclSuccess on success.
+ */
 OTEL_HIDDEN ncclResult_t profiler_otel_init_v4(void** context, int* eActivationMask, const char* commName,
                                                uint64_t commHash, int nNodes, int nranks, int rank,
                                                ncclDebugLogger_t logfn)
@@ -27,6 +41,15 @@ OTEL_HIDDEN ncclResult_t profiler_otel_init_v4(void** context, int* eActivationM
     return ret;
 }
 
+/**
+ * @brief Translate a v4 event descriptor and forward it to the v5 implementation.
+ *
+ * @param[in] context Profiler context returned by initialization.
+ * @param[out] eHandle Pointer that receives the allocated event handle.
+ * @param[in] eDescr v4 event descriptor to translate.
+ *
+ * @return ncclSuccess on success.
+ */
 OTEL_HIDDEN ncclResult_t profiler_otel_start_event_v4(void* context, void** eHandle,
                                                       ncclProfilerEventDescr_v4_t* eDescr)
 {
@@ -89,6 +112,15 @@ OTEL_HIDDEN ncclResult_t profiler_otel_start_event_v4(void* context, void** eHan
     return profiler_otel_start_event_v5(context, eHandle, &descr_v5);
 }
 
+/**
+ * @brief Forward a v4 event state transition to the v5 implementation.
+ *
+ * @param[in] eHandle Event handle returned by the start-event entry point.
+ * @param[in] eState v4 state enum value.
+ * @param[in] eStateArgs Optional state-specific arguments.
+ *
+ * @return ncclSuccess on success.
+ */
 OTEL_HIDDEN ncclResult_t profiler_otel_record_event_state_v4(void* eHandle, ncclProfilerEventState_v4_t eState,
                                                              ncclProfilerEventStateArgs_v4_t* eStateArgs)
 {

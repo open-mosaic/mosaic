@@ -186,6 +186,6 @@ TEST_F(ParamTest, RealParamWindowTimeoutDefault)
 TEST_F(ParamTest, RealParamLinearRegressionModeDefault)
 {
     unsetenv("NCCL_PROFILER_LINEAR_REGRESSION_MODE");
-    // Default should be "MIN"
-    EXPECT_STREQ(ncclParamLinearRegressionMode(), "MIN");
+    // Default should be "AVG"
+    EXPECT_STREQ(ncclParamLinearRegressionMode(), "AVG");
 }

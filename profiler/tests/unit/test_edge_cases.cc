@@ -19,9 +19,6 @@
 
 class EdgeCaseTest : public ::testing::Test
 {
-protected:
-    void SetUp() override {}
-    void TearDown() override {}
 };
 
 // Test that LinearRegression works correctly in single-threaded use

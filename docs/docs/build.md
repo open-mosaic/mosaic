@@ -224,12 +224,12 @@ The plugin uses several environment variables for configuration. All variables u
     - Example: `export NCCL_PROFILER_OTEL_TELEMETRY_BATCH_TIMEOUT_MS=5000`
 
 ### Linear Regression Configuration
-- **`NCCL_PROFILER_LINEAR_REGRESSION_MODE`** (default: `MIN`)
+- **`NCCL_PROFILER_LINEAR_REGRESSION_MODE`** (default: `AVG`)
     - Controls how latency/rate are estimated from transfer size/time samples
     - Supported values:
-        - `MIN`: for each transfer size, keep the minimum time observed (more robust to jitter)
         - `AVG`: use all points as observed
-    - Example: `export NCCL_PROFILER_LINEAR_REGRESSION_MODE=MIN`
+        - `MIN`: for each transfer size, keep the minimum time observed (more robust to jitter)
+    - Example: `export NCCL_PROFILER_LINEAR_REGRESSION_MODE=AVG`
 
 ### Event Filtering
 - **`NCCL_PROFILE_EVENT_MASK`** (auto-configured to `0x1E` if not set)

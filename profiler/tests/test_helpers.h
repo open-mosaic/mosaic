@@ -27,5 +27,8 @@ inline void resetProfilerState()
 void reset_notify_window_ready_tracking();
 int get_notify_window_ready_call_count();
 std::vector<std::pair<CommunicatorState*, int>> get_notify_window_ready_calls();  // Returns copy for thread-safety
+void reset_unregister_communicator_tracking();
+int get_unregister_communicator_call_count();
+CommunicatorState* get_last_unregistered_communicator();
 
 #endif  // TEST_HELPERS_H

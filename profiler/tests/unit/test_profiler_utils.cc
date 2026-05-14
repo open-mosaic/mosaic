@@ -12,9 +12,6 @@
 // Test fixture for profiler utility functions
 class ProfilerUtilsTest : public ::testing::Test
 {
-protected:
-    void SetUp() override {}
-    void TearDown() override {}
 };
 
 // =============================================================================

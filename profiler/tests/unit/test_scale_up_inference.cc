@@ -251,6 +251,61 @@ TEST_F(ScaleUpInferenceCollTest, TreeCaseInsensitive)
     EXPECT_EQ(r1.numTransfers, r2.numTransfers);
 }
 
+TEST_F(ScaleUpInferenceCollTest, NvlsTreeUsesTreeLikeModel)
+{
+    auto r = inferCollectiveTransfers("AllReduce", "NVLS_TREE", 1048576, 4, 2, kFullNetwork);
+    EXPECT_EQ(r.perTransferBytes, (size_t)SCALE_UP_TREE_TRANSFER_BYTES);
+    EXPECT_EQ(r.numTransfers, 48);
+    EXPECT_EQ(r.totalRankBytes, 1572864u);
+}
+
+TEST_F(ScaleUpInferenceCollTest, CollNetChainUsesTreeLikeModel)
+{
+    auto r = inferCollectiveTransfers("AllReduce", "COLLNET_CHAIN", 1048576, 4, 2, kFullNetwork);
+    EXPECT_EQ(r.perTransferBytes, (size_t)SCALE_UP_TREE_TRANSFER_BYTES);
+    EXPECT_EQ(r.numTransfers, 48);
+    EXPECT_EQ(r.totalRankBytes, 1572864u);
+}
+
+// =============================================================================
+// inferCollectiveTransfers - Direct chunked families
+// =============================================================================
+
+TEST_F(ScaleUpInferenceCollTest, AllReduceNvlsUsesDirectChunkedModel)
+{
+    // NVLS AllReduce uses the chunked direct path in NCCL rather than RingTwice.
+    // For 4KB, 4 ranks, 2 channels:
+    // nBytesGlobal = 4096
+    // bytesPerPath = 4096 / 2 = 2048
+    // totalRankBytes = 6144
+    // numTransfers = ceil(6144 / 2048) = 3
+    auto r = inferCollectiveTransfers("AllReduce", "NVLS", 4096, 4, 2, kFullNetwork);
+    EXPECT_EQ(r.perTransferBytes, 2048u);
+    EXPECT_EQ(r.numTransfers, 3);
+    EXPECT_EQ(r.totalRankBytes, 6144u);
+}
+
+TEST_F(ScaleUpInferenceCollTest, AllReduceCollNetDirectUsesDirectChunkedModel)
+{
+    auto r = inferCollectiveTransfers("AllReduce", "COLLNET_DIRECT", 4096, 4, 2, kFullNetwork);
+    EXPECT_EQ(r.perTransferBytes, 2048u);
+    EXPECT_EQ(r.numTransfers, 3);
+    EXPECT_EQ(r.totalRankBytes, 6144u);
+}
+
+TEST_F(ScaleUpInferenceCollTest, AllGatherPatUsesDirectChunkedModel)
+{
+    // PAT AllGather uses one chunked transfer stream per channel rather than ring steps.
+    // nBytesGlobal = 1024 * 4 = 4096
+    // bytesPerPath = 4096 / 2 = 2048
+    // totalRankBytes = 3072
+    // numTransfers = ceil(3072 / 2048) = 2
+    auto r = inferCollectiveTransfers("AllGather", "PAT", 1024, 4, 2, kFullNetwork);
+    EXPECT_EQ(r.perTransferBytes, 2048u);
+    EXPECT_EQ(r.numTransfers, 2);
+    EXPECT_EQ(r.totalRankBytes, 3072u);
+}
+
 // =============================================================================
 // inferCollectiveTransfers - 8-rank scenarios (realistic)
 // =============================================================================
@@ -266,6 +321,7 @@ TEST_F(ScaleUpInferenceCollTest, AllReduce8Ranks4Bytes)
     EXPECT_EQ(r.perTransferBytes, 1u);
     EXPECT_EQ(r.stepsPerRank, 14);
     EXPECT_EQ(r.numTransfers, 28);
+    EXPECT_EQ(r.totalRankBytes, 7u);
 }
 
 TEST_F(ScaleUpInferenceCollTest, AllReduce8Ranks1MB)

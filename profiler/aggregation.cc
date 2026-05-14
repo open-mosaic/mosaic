@@ -4,14 +4,256 @@
 #include "aggregation.h"
 
 #include <algorithm>
+#include <charconv>
+#include <cstring>
 #include <limits>
-#include <sstream>
+#include <set>
 #include <unordered_map>
 #include <vector>
 
 #include "param.h"
 #include "profiler_otel.h"  // For OTEL_TRACE
 #include "scale_up_inference.h"
+
+/**
+ * @brief Resolve the configured linear-regression mode for transfer fitting.
+ *
+ * @return Configured regression mode, defaulting to AVG for unset or invalid input.
+ */
+static LinearRegression::Mode getLinearRegressionMode()
+{
+    const char* modeStr = ncclParamLinearRegressionMode();
+    if (strcmp(modeStr, "MIN") == 0)
+    {
+        return LinearRegression::Mode::MIN;
+    }
+    if (strcmp(modeStr, "AVG") != 0 && strcmp(modeStr, "") != 0)
+    {
+        OTEL_WARN(NCCL_INIT, "Unknown LinearRegressionMode '%s', defaulting to AVG", modeStr);
+    }
+    return LinearRegression::Mode::AVG;
+}
+
+/**
+ * @brief Append an integer value to a string without stream formatting.
+ *
+ * @tparam Int Integer type to append.
+ * @param[in,out] out Destination string.
+ * @param[in] value Integer value to append.
+ */
+template <typename Int>
+static inline void appendInteger(std::string& out, Int value)
+{
+    char buffer[32];
+    auto result = std::to_chars(buffer, buffer + sizeof(buffer), value);
+    out.append(buffer, result.ptr);
+}
+
+/**
+ * @brief Return the provided token or a fallback literal for null pointers.
+ *
+ * @param[in] value Optional C string token.
+ *
+ * @return `value` when non-null, otherwise `"NULL"`.
+ */
+static inline const char* getTokenOrNull(const char* value)
+{
+    return value ? value : "NULL";
+}
+
+/**
+ * @brief Return the communicator hostname or a shared fallback string.
+ *
+ * @param[in] commState Optional communicator state.
+ *
+ * @return Communicator hostname when available, otherwise `"unknown"`.
+ */
+static inline const std::string& getHostnameOrUnknown(const CommunicatorState* commState)
+{
+    static const std::string kUnknownHostname = "unknown";
+    return commState ? commState->hostname : kUnknownHostname;
+}
+
+/**
+ * @brief Append the standard communicator key prefix to an aggregation key.
+ *
+ * @param[in,out] out Destination key string.
+ * @param[in] commHash Communicator hash to encode.
+ */
+static inline void appendCommPrefix(std::string& out, uint64_t commHash)
+{
+    out.append("Comm");
+    appendInteger(out, commHash);
+}
+
+/**
+ * @brief Build a rank or channel transfer aggregation key.
+ *
+ * @param[in] commHash Communicator hash.
+ * @param[in] commState Optional communicator state providing hostname and rank.
+ * @param[in] fallbackRank Rank value to use when `commState` is null.
+ * @param[in] peer Destination peer rank or pipeline.
+ * @param[in] isP2P Whether the key should use P2P naming.
+ * @param[in] includeChannel Whether to append a channel suffix.
+ * @param[in] channelId Channel identifier appended when `includeChannel` is true.
+ *
+ * @return Fully formatted transfer aggregation key.
+ */
+static std::string buildTransferKey(uint64_t commHash, const CommunicatorState* commState, int fallbackRank, int peer,
+                                    bool isP2P, bool includeChannel, int channelId)
+{
+    const std::string& hostname = getHostnameOrUnknown(commState);
+    const int sourceRank        = commState ? commState->rank : fallbackRank;
+
+    std::string key;
+    key.reserve(48 + hostname.size());
+    appendCommPrefix(key, commHash);
+    key.push_back('_');
+
+    if (isP2P)
+    {
+        key.append(hostname);
+        key.append("_Pipeline");
+        appendInteger(key, sourceRank);
+        key.append("_ToPipeline");
+        appendInteger(key, peer);
+    }
+    else
+    {
+        key.append("Rank");
+        appendInteger(key, sourceRank);
+        key.append("_ToPeer");
+        appendInteger(key, peer);
+    }
+
+    if (includeChannel)
+    {
+        key.append("_Chnl");
+        appendInteger(key, channelId);
+    }
+
+    return key;
+}
+
+/**
+ * @brief Construct an empty aggregated transfer accumulator.
+ */
+AggregatedTransfer::AggregatedTransfer() : totalBytes(0), totalTimeUs(0.0), count(0), lr(getLinearRegressionMode()) {}
+
+/**
+ * @brief Add a transfer interval alongside the aggregate transfer totals.
+ *
+ * @param[in] bytes Transfer size in bytes.
+ * @param[in] timeUs Transfer duration in microseconds.
+ * @param[in] startTs Absolute transfer start timestamp.
+ * @param[in] endTs Absolute transfer end timestamp.
+ */
+void AggregatedTransfer::addTransferWithTimestamps(size_t bytes, double timeUs, double startTs, double endTs)
+{
+    addTransfer(bytes, timeUs);
+    if (startTs < endTs)
+    {
+        intervals.push_back({startTs, endTs});
+    }
+}
+
+/**
+ * @brief Append transfer intervals from another aggregate.
+ *
+ * @param[in] other Aggregate whose intervals should be appended.
+ */
+void AggregatedTransfer::mergeIntervals(const AggregatedTransfer& other)
+{
+    intervals.insert(intervals.end(), other.intervals.begin(), other.intervals.end());
+}
+
+/**
+ * @brief Compute the union of recorded transfer intervals.
+ *
+ * @return Total active transfer time in microseconds.
+ */
+double AggregatedTransfer::getActiveTime() const
+{
+    if (intervals.empty()) return 0.0;
+
+    std::vector<std::pair<double, double>> sorted = intervals;
+    std::sort(sorted.begin(), sorted.end());
+
+    double activeTime   = 0.0;
+    double currentStart = sorted[0].first;
+    double currentEnd   = sorted[0].second;
+
+    for (size_t i = 1; i < sorted.size(); i++)
+    {
+        if (sorted[i].first <= currentEnd)
+        {
+            currentEnd = std::max(currentEnd, sorted[i].second);
+        }
+        else
+        {
+            activeTime += currentEnd - currentStart;
+            currentStart = sorted[i].first;
+            currentEnd   = sorted[i].second;
+        }
+    }
+
+    activeTime += currentEnd - currentStart;
+    return activeTime;
+}
+
+/**
+ * @brief Compute bandwidth from the merged active transfer time.
+ *
+ * @param[out] rateMBps Bandwidth in MB/s using the decimal MB convention.
+ *
+ * @return true when the rate was computed, false when no valid data exists.
+ */
+bool AggregatedTransfer::getRateFromActiveTime(double& rateMBps) const
+{
+    double activeTime = getActiveTime();
+    if (activeTime <= 0.0 || totalBytes == 0)
+    {
+        rateMBps = 0.0;
+        return false;
+    }
+
+    rateMBps = (double)totalBytes / activeTime;
+    return true;
+}
+
+/**
+ * @brief Estimate latency from the linear-regression fit of transfer size to time.
+ *
+ * @param[out] latencyUs Estimated latency in microseconds.
+ *
+ * @return true when a stable latency estimate could be derived.
+ */
+bool AggregatedTransfer::getLatencyFromLinearRegression(double& latencyUs) const
+{
+    if (!lr.hasAtLeastThreeDifferentSizes())
+    {
+        latencyUs = 0.0;
+        return false;
+    }
+
+    double slope;
+    double intercept;
+    if (lr.calculate(slope, intercept))
+    {
+        double rSquared;
+        if (lr.calculateRSquared(rSquared) && rSquared >= 0.8)
+        {
+            latencyUs = (intercept >= 0) ? intercept : 0.0;
+            if (slope > 1e-6)
+            {
+                return true;
+            }
+        }
+    }
+
+    latencyUs = 0.0;
+    return false;
+}
 
 /**
  * @brief Construct a WindowAggregator for a specific rank.
@@ -25,52 +267,67 @@ WindowAggregator::WindowAggregator(int rank) : rank(rank) {}
  *
  * @param[in] event Collective event handle.
  *
- * @return Key string in format: Comm<hash>_Func_Algo_Proto_nChannels
+ * @return Key string in format: Comm<hash>_<func>_<algo>_<proto>_<nChannels>Chnl
  */
 std::string WindowAggregator::getCollectiveKey(const otelEventHandle_t& event) const
 {
-    std::stringstream ss;
     uint64_t commHash = event.commState ? event.commState->comm_hash : 0;
-    ss << "Comm" << commHash << "_" << (event.coll.func ? event.coll.func : "NULL") << "_"
-       << (event.coll.algo ? event.coll.algo : "NULL") << "_" << (event.coll.proto ? event.coll.proto : "NULL") << "_"
-       << (int)event.coll.nChannels << "Chnl";
-    return ss.str();
+    const char* func  = getTokenOrNull(event.coll.func);
+    const char* algo  = getTokenOrNull(event.coll.algo);
+    const char* proto = getTokenOrNull(event.coll.proto);
+
+    std::string key;
+    key.reserve(32 + std::strlen(func) + std::strlen(algo) + std::strlen(proto));
+    appendCommPrefix(key, commHash);
+    key.push_back('_');
+    key.append(func);
+    key.push_back('_');
+    key.append(algo);
+    key.push_back('_');
+    key.append(proto);
+    key.push_back('_');
+    appendInteger(key, (int)event.coll.nChannels);
+    key.append("Chnl");
+    return key;
 }
 
 /**
  * @brief Generate aggregation key for a P2P event.
  *
- * For P2P communicators (nranks=2), this generates a key that identifies:
- * - The communicator hash (for correlation with the peer side)
- * - The source (hostname, global_rank, local_rank)
- * - The function (Send/Recv)
- * - The peer rank within the communicator (0 or 1)
- * - Number of channels
- *
- * Note: We only know our own identity (hostname, ranks). The peer's identity
- * can be correlated in Grafana using the shared comm_hash (both sides have the same hash).
+ * For P2P communicators, the key captures the communicator hash, hostname,
+ * function name, source pipeline, destination pipeline, and channel fan-out.
  *
  * @param[in] event P2P event handle.
  *
- * @return Key string in format: Comm<hash>_<hostname>_<global>_<local>_<func>_ToPeer<peer>_<nChannels>Chnl
+ * @return Key string in format: Comm<hash>_(<hostname>)_<func>_Pipeline<src>ToPipeline<peer>_<nChannels>Chnl
  */
 std::string WindowAggregator::getP2PKey(const otelEventHandle_t& event) const
 {
-    std::stringstream ss;
-
-    uint64_t commHash    = event.commState ? event.commState->comm_hash : 0;
-    std::string hostname = event.commState ? event.commState->hostname : "unknown";
+    uint64_t commHash           = event.commState ? event.commState->comm_hash : 0;
+    const std::string& hostname = getHostnameOrUnknown(event.commState);
     // For P2P: rank within the P2P comm (0 or 1) represents the pipeline number
     int src_pipeline = event.commState ? event.commState->rank : rank;
-    const char* func = event.p2p.func ? event.p2p.func : "NULL";
+    const char* func = getTokenOrNull(event.p2p.func);
 
     // Key format: Comm<hash>_(<hostname>)_<func>_Pipeline<src>ToPipeline<dst>_<nChannels>Chnl
     // For P2P comms (nranks=2), both src and peer (0 or 1) represent pipeline numbers
     // Example: Comm123456_(romeo)_Send_Pipeline0ToPipeline1_2Chnl
-    ss << "Comm" << commHash << "_(" << hostname << ")_" << func << "_Pipeline" << src_pipeline << "ToPipeline"
-       << event.p2p.peer << "_" << (int)event.p2p.nChannels << "Chnl";
+    std::string key;
+    key.reserve(48 + hostname.size() + std::strlen(func));
+    appendCommPrefix(key, commHash);
+    key.append("_(");
+    key.append(hostname);
+    key.append(")_");
+    key.append(func);
+    key.append("_Pipeline");
+    appendInteger(key, src_pipeline);
+    key.append("ToPipeline");
+    appendInteger(key, event.p2p.peer);
+    key.push_back('_');
+    appendInteger(key, (int)event.p2p.nChannels);
+    key.append("Chnl");
 
-    return ss.str();
+    return key;
 }
 
 /**
@@ -81,33 +338,17 @@ std::string WindowAggregator::getP2PKey(const otelEventHandle_t& event) const
  *
  * @param[in] commHash Communicator hash.
  * @param[in] peer Destination peer rank within the communicator.
- * @param[in] commState Communicator state for hostname, rank, and comm_type.
+ * @param[in] commState Communicator state for hostname and rank.
+ * @param[in] isP2P Whether the owning root operation is P2P.
  *
  * @return Key string:
  *   - COLLECTIVE: Comm<hash>_Rank<X>_ToPeer<peer>
  *   - P2P: Comm<hash>_<hostname>_Pipeline<src>_ToPipeline<peer>
  */
-std::string WindowAggregator::getRankTransferKey(uint64_t commHash, int peer, const CommunicatorState* commState) const
+std::string WindowAggregator::getRankTransferKey(uint64_t commHash, int peer, const CommunicatorState* commState,
+                                                 bool isP2P) const
 {
-    std::stringstream ss;
-
-    bool isP2P = commState && commState->comm_type == CommunicatorState::CommType::P2P;
-
-    if (isP2P)
-    {
-        // P2P: Show hostname and pipeline numbers
-        // rank within P2P comm (0 or 1) represents the pipeline number
-        std::string hostname = commState ? commState->hostname : "unknown";
-        int src_pipeline     = commState ? commState->rank : rank;
-        ss << "Comm" << commHash << "_" << hostname << "_Pipeline" << src_pipeline << "_ToPipeline" << peer;
-    }
-    else
-    {
-        // COLLECTIVE: Show rank within communicator (no hostname)
-        int comm_rank = commState ? commState->rank : rank;
-        ss << "Comm" << commHash << "_Rank" << comm_rank << "_ToPeer" << peer;
-    }
-    return ss.str();
+    return buildTransferKey(commHash, commState, rank, peer, isP2P, false, 0);
 }
 
 /**
@@ -118,31 +359,18 @@ std::string WindowAggregator::getRankTransferKey(uint64_t commHash, int peer, co
  *
  * @param[in] event ProxyOp event handle containing channel and peer info.
  *
+ * @param[in] isP2P Whether the owning root operation is P2P.
+ *
  * @return Key string:
  *   - COLLECTIVE: Comm<hash>_Rank<X>_ToPeer<peer>_Chnl<id>
  *   - P2P: Comm<hash>_<hostname>_Pipeline<src>_ToPipeline<peer>_Chnl<id>
  */
-std::string WindowAggregator::getChannelTransferKey(const otelEventHandle_t& event) const
+std::string WindowAggregator::getChannelTransferKey(const otelEventHandle_t& event, bool isP2P) const
 {
-    std::stringstream ss;
     uint64_t commHash = event.commState ? event.commState->comm_hash : 0;
 
-    bool isP2P = event.commState && event.commState->comm_type == CommunicatorState::CommType::P2P;
-
-    if (isP2P)
-    {
-        std::string hostname = event.commState ? event.commState->hostname : "unknown";
-        int src_pipeline     = event.commState ? event.commState->rank : event.rank;
-        ss << "Comm" << commHash << "_" << hostname << "_Pipeline" << src_pipeline << "_ToPipeline"
-           << event.proxyOp.peer << "_Chnl" << (int)event.proxyOp.channelId;
-    }
-    else
-    {
-        int comm_rank = event.commState ? event.commState->rank : event.rank;
-        ss << "Comm" << commHash << "_Rank" << comm_rank << "_ToPeer" << event.proxyOp.peer << "_Chnl"
-           << (int)event.proxyOp.channelId;
-    }
-    return ss.str();
+    return buildTransferKey(commHash, event.commState, event.rank, event.proxyOp.peer, isP2P, true,
+                            (int)event.proxyOp.channelId);
 }
 
 /**
@@ -154,208 +382,261 @@ std::string WindowAggregator::getChannelTransferKey(const otelEventHandle_t& eve
  */
 std::string WindowAggregator::getTransferChannelKey(uint8_t channelId) const
 {
-    std::stringstream ss;
-    ss << "Chnl" << (int)channelId;
-    return ss.str();
+    std::string key;
+    key.reserve(16);
+    key.append("Chnl");
+    appendInteger(key, (int)channelId);
+    return key;
+}
+
+/**
+ * @brief Record a collective root event for later aggregation.
+ *
+ * @param[in] event Collective event handle to track.
+ */
+void WindowAggregator::trackCollectiveEvent(const otelEventHandle_t& event)
+{
+    InProgressOperation op;
+    op.key            = getCollectiveKey(event);
+    op.startTs        = event.startTs;
+    op.endTs          = event.endTs;
+    op.bytes          = event.coll.bytes;
+    op.seenProxyOps   = 0;
+    op.lastProxyOpEnd = event.startTs;
+    op.func           = event.coll.func;
+    op.algo           = event.coll.algo;
+    op.nChannels      = event.coll.nChannels;
+    op.nRanks         = event.commState ? event.commState->nranks : 1;
+
+    int comm_rank = event.commState ? event.commState->rank : rank;
+    op.peer       = op.nRanks > 1 ? (comm_rank + 1) % op.nRanks : 0;
+
+    collHandleToOp[&event] = op;
+
+    OTEL_TRACE(NCCL_INIT, "Tracked Coll: %s, eHandle=%p, endTs=%.2f", op.key.c_str(), &event, op.endTs);
+}
+
+/**
+ * @brief Record a P2P root event for later aggregation.
+ *
+ * @param[in] event P2P event handle to track.
+ */
+void WindowAggregator::trackP2PEvent(const otelEventHandle_t& event)
+{
+    InProgressOperation op;
+    op.key            = getP2PKey(event);
+    op.startTs        = event.startTs;
+    op.endTs          = event.endTs;
+    op.bytes          = event.p2p.bytes;
+    op.seenProxyOps   = 0;
+    op.lastProxyOpEnd = event.startTs;
+    op.func           = event.p2p.func;
+    op.nChannels      = event.p2p.nChannels;
+    op.nRanks         = event.commState ? event.commState->nranks : 1;
+    op.peer           = event.p2p.peer;
+
+    p2pHandleToOp[&event] = op;
+
+    OTEL_TRACE(NCCL_INIT, "Tracked P2P: %s, eHandle=%p, endTs=%.2f", op.key.c_str(), &event, op.endTs);
+}
+
+/**
+ * @brief Retain a P2P API marker for grouped AlltoAll reconstruction.
+ *
+ * @param[in] event P2P API event handle to track.
+ */
+void WindowAggregator::trackP2pApiEvent(const otelEventHandle_t& event)
+{
+    if (event.commState) p2pApiEvents.push_back(&event);
+}
+
+/**
+ * @brief Retain a group event for grouped AlltoAll reconstruction.
+ *
+ * @param[in] event Group event handle to track.
+ */
+void WindowAggregator::trackGroupEvent(const otelEventHandle_t& event)
+{
+    if (event.commState) groupEvents.push_back(&event);
+}
+
+/**
+ * @brief Accumulate a ProxyStep transfer into its parent ProxyOp aggregate.
+ *
+ * @param[in] event ProxyStep event handle containing transfer timing.
+ */
+void WindowAggregator::accumulateProxyStepTransfer(const otelEventHandle_t& event)
+{
+    if (!event.proxyStep.hasSendWait)
+    {
+        return;
+    }
+
+    double transferTime = event.endTs - event.proxyStep.sendWaitTs;
+    if (transferTime <= 0)
+    {
+        OTEL_WARN(NCCL_INIT, "Skipping ProxyStep with invalid transferTime=%.2f us (size=%zu)", transferTime,
+                  event.proxyStep.transSize);
+        return;
+    }
+
+    const void* proxyOpHandle = event.parentObj;
+    if (!proxyOpHandle)
+    {
+        OTEL_WARN(NCCL_INIT, "ProxyStep with SendWait has NULL parentObj (size=%zu, transferTime=%.2f us)",
+                  event.proxyStep.transSize, transferTime);
+        return;
+    }
+
+    proxyOpTransfers[proxyOpHandle].addTransferWithTimestamps(event.proxyStep.transSize, transferTime,
+                                                              event.proxyStep.sendWaitTs, event.endTs);
+
+    OTEL_TRACE(NCCL_INIT, "Aggregated ProxyStep to ProxyOp %p: size=%zu, time=%.2f us, interval=[%.2f, %.2f]",
+               proxyOpHandle, event.proxyStep.transSize, transferTime, event.proxyStep.sendWaitTs, event.endTs);
+}
+
+/**
+ * @brief Store a ProxyOp event and update its parent operation bookkeeping.
+ *
+ * @param[in] event ProxyOp event handle to retain for finalize().
+ */
+void WindowAggregator::storeProxyOpForFinalize(const otelEventHandle_t& event)
+{
+    proxyOps[&event] = event;
+
+    const void* parentHandle = getRootCollectiveHandle(event.parentObj);
+    if (parentHandle)
+    {
+        auto collIt = collHandleToOp.find(parentHandle);
+        if (collIt != collHandleToOp.end())
+        {
+            collIt->second.lastProxyOpEnd = std::max(collIt->second.lastProxyOpEnd, event.endTs);
+            collIt->second.seenProxyOps++;
+        }
+
+        auto p2pIt = p2pHandleToOp.find(parentHandle);
+        if (p2pIt != p2pHandleToOp.end())
+        {
+            p2pIt->second.lastProxyOpEnd = std::max(p2pIt->second.lastProxyOpEnd, event.endTs);
+            p2pIt->second.seenProxyOps++;
+        }
+    }
+
+    OTEL_TRACE(NCCL_INIT, "Stored ProxyOp %p for finalization: parentObj=%p", &event, event.parentObj);
+}
+
+/**
+ * @brief Group a KernelCh event by its parent root operation.
+ *
+ * @param[in] event KernelCh event handle to track.
+ */
+void WindowAggregator::trackKernelChannelEvent(const otelEventHandle_t& event)
+{
+    if (!event.parentObj)
+    {
+        return;
+    }
+
+    kernelChByParent[event.parentObj].push_back(event);
+    OTEL_TRACE(NCCL_INIT, "Tracked KernelCh: parent=%p, channelId=%d, hasStop=%d", event.parentObj,
+               event.kernelCh.channelId, event.kernelCh.hasStop);
+}
+
+/**
+ * @brief Record a KernelLaunch event for telemetry-side diagnostics.
+ *
+ * @param[in] event KernelLaunch event handle to track.
+ */
+void WindowAggregator::trackKernelLaunchEvent(const otelEventHandle_t& event)
+{
+    kernelLaunches.push_back(event);
+    OTEL_TRACE(NCCL_INIT, "Tracked KernelLaunch: parent=%p", event.parentObj);
 }
 
 /**
  * @brief Add an event to the aggregator.
  *
- * Processes events based on type:
- * - Coll/P2P: Tracked for later linking with ProxyOps
- * - ProxyStep: Aggregated to parent ProxyOp
- * - ProxyOp: Stored for linking in finalize()
+ * Dispatches each event to the helper that owns its aggregation path.
  *
  * @param[in] event Event handle to process.
  */
 void WindowAggregator::addEvent(const otelEventHandle_t& event)
 {
-    // Phase 1: Track Coll/P2P - store by eHandle for later ProxyOp correlation
-    if (event.type == ncclProfileColl)
+    switch (event.type)
     {
-        InProgressOperation op;
-        op.key            = getCollectiveKey(event);
-        op.startTs        = event.startTs;
-        op.endTs          = event.endTs;
-        op.bytes          = event.coll.bytes;
-        op.seenProxyOps   = 0;
-        op.lastProxyOpEnd = event.startTs;
-        op.func           = event.coll.func;
-        op.algo           = event.coll.algo;
-        op.nChannels      = event.coll.nChannels;
-        op.nRanks         = event.commState ? event.commState->nranks : 1;
-        // For ring collectives, the send peer is the next rank in the ring
-        int comm_rank = event.commState ? event.commState->rank : rank;
-        op.peer       = op.nRanks > 1 ? (comm_rank + 1) % op.nRanks : 0;
-
-        collHandleToOp[&event] = op;
-
-        OTEL_TRACE(NCCL_INIT, "Tracked Coll: %s, eHandle=%p, endTs=%.2f", op.key.c_str(), &event, op.endTs);
-    }
-    else if (event.type == ncclProfileP2p)
-    {
-        InProgressOperation op;
-        op.key            = getP2PKey(event);
-        op.startTs        = event.startTs;
-        op.endTs          = event.endTs;
-        op.bytes          = event.p2p.bytes;
-        op.seenProxyOps   = 0;
-        op.lastProxyOpEnd = event.startTs;
-        op.func           = event.p2p.func;
-        op.nChannels      = event.p2p.nChannels;
-        op.nRanks         = event.commState ? event.commState->nranks : 1;
-        op.peer           = event.p2p.peer;
-
-        p2pHandleToOp[&event] = op;
-
-        // If this P2P Send has a P2pApi parent, register it for AlltoAll collective grouping.
-        // All P2P tasks from a single AlltoAll share the same P2pApi event handle as parentObj.
-        if (event.parentObj && p2pApiHandleToFunc.count(event.parentObj))
-        {
-            p2pHandlesByApiHandle[event.parentObj].push_back(&event);
-            OTEL_TRACE(NCCL_INIT, "Linked P2P Send (peer=%d) to P2pApi parent %p (%s)", event.p2p.peer, event.parentObj,
-                       p2pApiHandleToFunc.at(event.parentObj).c_str());
-        }
-
-        OTEL_TRACE(NCCL_INIT, "Tracked P2P: %s, eHandle=%p, endTs=%.2f", op.key.c_str(), &event, op.endTs);
-    }
-    // Phase 1b: Track P2pApi group markers (AlltoAll collective anchors)
-    // P2pApi events carry the original collective function name (e.g., "AlltoAll").
-    // They are stored before P2p events in the buffer, so p2pApiHandleToFunc is populated
-    // before P2p events reference them via parentObj.
-    else if (event.type == ncclProfileP2pApi)
-    {
-        if (event.p2pApi.func)
-        {
-            p2pApiHandleToFunc[&event] = std::string(event.p2pApi.func);
-            OTEL_TRACE(NCCL_INIT, "Tracked P2pApi marker: func=%s, eHandle=%p", event.p2pApi.func, &event);
-        }
-        return;  // No further processing; just a grouping anchor
-    }
-    // Phase 2: Aggregate ProxyStep transfers to their parent ProxyOp
-    else if (event.type == ncclProfileProxyStep)
-    {
-        // Only process ProxySteps with SendWait (actual transfers)
-        if (event.proxyStep.hasSendWait)
-        {
-            double transferTime = event.endTs - event.proxyStep.sendWaitTs;
-
-            // Skip transfers with transferTime <= 0 (0 means infinite bandwidth, negative is invalid)
-            // Do not clamp to 0 as that would incorrectly represent infinite bandwidth
-            if (transferTime <= 0)
-            {
-                OTEL_WARN(NCCL_INIT, "Skipping ProxyStep with invalid transferTime=%.2f us (size=%zu)", transferTime,
-                          event.proxyStep.transSize);
-                return;  // Skip this transfer
-            }
-
-            // Find parent ProxyOp via parentObj
-            const void* proxyOpHandle = event.parentObj;
-            if (proxyOpHandle)
-            {
-                // Aggregate to ProxyOp with timestamps for interval-based rate calculation
-                // sendWaitTs is the absolute start time, endTs is the absolute end time
-                proxyOpTransfers[proxyOpHandle].addTransferWithTimestamps(event.proxyStep.transSize, transferTime,
-                                                                          event.proxyStep.sendWaitTs, event.endTs);
-
-                OTEL_TRACE(
-                    NCCL_INIT, "Aggregated ProxyStep to ProxyOp %p: size=%zu, time=%.2f us, interval=[%.2f, %.2f]",
-                    proxyOpHandle, event.proxyStep.transSize, transferTime, event.proxyStep.sendWaitTs, event.endTs);
-            }
-            else
-            {
-                // ProxyStep with SendWait should have a parent ProxyOp
-                // This is unexpected and indicates a potential data consistency issue
-                OTEL_WARN(NCCL_INIT, "ProxyStep with SendWait has NULL parentObj (size=%zu, transferTime=%.2f us)",
-                          event.proxyStep.transSize, transferTime);
-            }
-        }
-    }
-    // Phase 3: Just store ProxyOp for later linking in finalize() (after all ProxySteps are aggregated)
-    else if (event.type == ncclProfileProxyOp)
-    {
-        // Store a copy of the ProxyOp event for processing in finalize()
-        proxyOps[&event] = event;
-
-        // Update timing in parent Coll/P2P (needed for duration calculation)
-        const void* parentHandle = getRootCollectiveHandle(event.parentObj);
-        if (parentHandle)
-        {
-            auto collIt = collHandleToOp.find(parentHandle);
-            if (collIt != collHandleToOp.end())
-            {
-                collIt->second.lastProxyOpEnd = std::max(collIt->second.lastProxyOpEnd, event.endTs);
-                collIt->second.seenProxyOps++;
-            }
-
-            auto p2pIt = p2pHandleToOp.find(parentHandle);
-            if (p2pIt != p2pHandleToOp.end())
-            {
-                p2pIt->second.lastProxyOpEnd = std::max(p2pIt->second.lastProxyOpEnd, event.endTs);
-                p2pIt->second.seenProxyOps++;
-            }
-        }
-
-        OTEL_TRACE(NCCL_INIT, "Stored ProxyOp %p for finalization: parentObj=%p", &event, event.parentObj);
-    }
-    // =========================================================================
-    // Kernel event handling (scale-up analysis)
-    // =========================================================================
-    else if (event.type == ncclProfileKernelCh)
-    {
-        // Group KernelCh events by their parent Coll/P2P handle.
-        // parentObj for KernelCh points directly to the Coll/P2P task event handle.
-        if (event.parentObj)
-        {
-            kernelChByParent[event.parentObj].push_back(event);
-            OTEL_TRACE(NCCL_INIT, "Tracked KernelCh: parent=%p, channelId=%d, hasStop=%d", event.parentObj,
-                       event.kernelCh.channelId, event.kernelCh.hasStop);
-        }
-    }
-    else if (event.type == ncclProfileKernelLaunch)
-    {
-        kernelLaunches.push_back(event);
-        OTEL_TRACE(NCCL_INIT, "Tracked KernelLaunch: parent=%p", event.parentObj);
+        case ncclProfileColl:
+            trackCollectiveEvent(event);
+            return;
+        case ncclProfileP2p:
+            trackP2PEvent(event);
+            return;
+        case ncclProfileP2pApi:
+            trackP2pApiEvent(event);
+            return;
+        case ncclProfileGroup:
+            trackGroupEvent(event);
+            return;
+        case ncclProfileProxyStep:
+            accumulateProxyStepTransfer(event);
+            return;
+        case ncclProfileProxyOp:
+            storeProxyOpForFinalize(event);
+            return;
+        case ncclProfileKernelCh:
+            trackKernelChannelEvent(event);
+            return;
+        case ncclProfileKernelLaunch:
+            trackKernelLaunchEvent(event);
+            return;
+        default:
+            return;
     }
 }
 
 /**
- * @brief Finalize aggregation and calculate metrics.
+ * @brief Identify grouped P2P windows that should be reconstructed as AlltoAll.
  *
- * Links ProxyOps to their parent Collectives/P2Ps, calculates correct durations
- * (Coll/P2P START → Last ProxyOp STOP), and prepares aggregated data for export.
- * Must be called after all events are added.
+ * @param[out] alltoAllGroups Group event to grouped P2P handle mapping.
+ * @param[out] alltoAllExpectedSendCounts Expected send fan-out for each group.
  */
-void WindowAggregator::finalize()
+void WindowAggregator::identifyGroupedAlltoAllOperations(
+    std::map<const void*, std::vector<const void*>>& alltoAllGroups,
+    std::map<const void*, size_t>& alltoAllExpectedSendCounts)
 {
-    OTEL_TRACE(NCCL_INIT, "Finalizing: %zu ProxyOps, %zu ProxyOp transfers", proxyOps.size(), proxyOpTransfers.size());
+    alltoAllP2PHandles.clear();
 
-#ifdef PROFILER_OTEL_ENABLE_TRACE
-    int proxyOpsWithTransfers    = 0;
-    int proxyOpsWithoutTransfers = 0;
-#endif
+    for (const otelEventHandle_t* groupEvent : groupEvents)
+    {
+        if (!groupEvent || !groupEvent->commState) continue;
 
-    // =========================================================================
-    // Classify communicator execution mode (CUDA Graph vs non-CUDA Graph)
-    //
-    // We assume a communicator is either CUDA-Graph-driven or not.
-    //
-    // Metric source for classification:
-    // - KernelCh GPU timer start tick (pTimerStart).
-    //
-    // Detection heuristic:
-    // - In non-CUDA-Graph execution, each collective/p2p op has its own pTimerStart.
-    // - In CUDA Graph replay, multiple distinct parent ops can share the same pTimerStart.
-    //
-    // Implementation:
-    // - Scan KernelCh events and detect any pTimerStart used by >= 2 distinct parent
-    //   operation handles.
-    //
-    // Perf:
-    // - One linear scan over KernelCh events with an unordered_map. Runs once per
-    //   window per communicator.
-    // =========================================================================
+        std::vector<const void*> groupedP2PHandles;
+        for (const auto& p2pPair : p2pHandleToOp)
+        {
+            const InProgressOperation& op     = p2pPair.second;
+            const otelEventHandle_t* p2pEvent = static_cast<const otelEventHandle_t*>(p2pPair.first);
+            const CommunicatorState* p2pComm  = p2pEvent ? p2pEvent->commState : nullptr;
+
+            if (p2pComm != groupEvent->commState) continue;
+            if (op.startTs < groupEvent->startTs || op.startTs > groupEvent->endTs) continue;
+
+            groupedP2PHandles.push_back(p2pPair.first);
+        }
+
+        const size_t sendApiCount = countGroupSendP2pApis(*groupEvent);
+        if (isAlltoAllGroup(*groupEvent, groupedP2PHandles, sendApiCount))
+        {
+            alltoAllGroups[groupEvent]             = groupedP2PHandles;
+            alltoAllExpectedSendCounts[groupEvent] = std::max(groupedP2PHandles.size(), sendApiCount);
+            alltoAllP2PHandles.insert(groupedP2PHandles.begin(), groupedP2PHandles.end());
+        }
+    }
+}
+
+/**
+ * @brief Classify the communicator scale-up execution mode from KernelCh timing.
+ */
+void WindowAggregator::classifyScaleUpCommunicatorExecutionMode()
+{
     CommunicatorState* commState = nullptr;
     if (!collHandleToOp.empty())
         commState = const_cast<CommunicatorState*>(
@@ -366,66 +647,78 @@ void WindowAggregator::finalize()
     else if (!proxyOps.empty())
         commState = const_cast<CommunicatorState*>(proxyOps.begin()->second.commState);
 
-    if (commState)
+    if (!commState)
     {
-        auto execMode =
-            static_cast<CommunicatorState::ScaleUpExecMode>(commState->scaleUpExecMode.load(std::memory_order_acquire));
-
-        // We allow a one-way upgrade to CUDA_GRAPH if we ever observe CUDA-graph evidence
-        // in a later window (e.g., warm-up windows before graph replay may look non-graph).
-        if (execMode != CommunicatorState::ScaleUpExecMode::CUDA_GRAPH)
-        {
-            bool cudaGraphDetected = false;
-            bool sawAnyPTimerStart = false;
-
-            std::unordered_map<uint64_t, const void*> firstHandleByPTimerStart;
-            firstHandleByPTimerStart.reserve(kernelChByParent.size() * 2);
-
-            for (const auto& parentPair : kernelChByParent)
-            {
-                const void* parentHandle = parentPair.first;
-                for (const auto& kch : parentPair.second)
-                {
-                    // pTimerStart is recorded at KernelCh start_event; hasStop indicates that
-                    // KernelChStop was recorded (pTimerStop captured). For CUDA Graph detection
-                    // we only require a non-zero pTimerStart.
-                    if (kch.kernelCh.pTimerStart == 0) continue;
-                    sawAnyPTimerStart = true;
-
-                    uint64_t pTimerStart = kch.kernelCh.pTimerStart;
-                    auto it              = firstHandleByPTimerStart.find(pTimerStart);
-                    if (it == firstHandleByPTimerStart.end())
-                    {
-                        firstHandleByPTimerStart.emplace(pTimerStart, parentHandle);
-                    }
-                    else if (it->second != parentHandle)
-                    {
-                        cudaGraphDetected = true;
-                        break;
-                    }
-                }
-                if (cudaGraphDetected) break;
-            }
-
-            if (cudaGraphDetected)
-            {
-                commState->scaleUpExecMode.store(static_cast<uint8_t>(CommunicatorState::ScaleUpExecMode::CUDA_GRAPH),
-                                                 std::memory_order_release);
-                OTEL_TRACE(NCCL_INIT, "Scale-up communicator classified: commHash=%lu mode=%s",
-                           (unsigned long)commState->comm_hash, commState->getScaleUpExecModeString());
-            }
-            else if (execMode == CommunicatorState::ScaleUpExecMode::UNKNOWN && sawAnyPTimerStart)
-            {
-                commState->scaleUpExecMode.store(
-                    static_cast<uint8_t>(CommunicatorState::ScaleUpExecMode::NON_CUDA_GRAPH),
-                    std::memory_order_release);
-                OTEL_TRACE(NCCL_INIT, "Scale-up communicator classified: commHash=%lu mode=%s",
-                           (unsigned long)commState->comm_hash, commState->getScaleUpExecModeString());
-            }
-        }
+        return;
     }
 
-    // Phase 1: Link ProxyOps to their parent Coll/P2P and aggregate transfers
+    CommunicatorState::ScaleUpExecMode execMode =
+        static_cast<CommunicatorState::ScaleUpExecMode>(commState->scaleUpExecMode.load(std::memory_order_acquire));
+
+    if (execMode == CommunicatorState::ScaleUpExecMode::CUDA_GRAPH)
+    {
+        return;
+    }
+
+    bool cudaGraphDetected     = false;
+    bool sawAnyKernelCh        = false;
+    bool sawAnyCollPTimerStart = false;
+
+    std::unordered_map<uint64_t, const void*> firstHandleByPTimerStart;
+    firstHandleByPTimerStart.reserve(kernelChByParent.size() * 2);
+
+    for (const auto& parentPair : kernelChByParent)
+    {
+        const void* parentHandle = parentPair.first;
+        bool isCollParent        = collHandleToOp.count(parentHandle) > 0;
+        for (const otelEventHandle_t& kch : parentPair.second)
+        {
+            sawAnyKernelCh = true;
+            if (kch.kernelCh.pTimerStart == 0) continue;
+            if (!isCollParent) continue;
+            sawAnyCollPTimerStart = true;
+
+            uint64_t pTimerStart = kch.kernelCh.pTimerStart;
+            auto it              = firstHandleByPTimerStart.find(pTimerStart);
+            if (it == firstHandleByPTimerStart.end())
+            {
+                firstHandleByPTimerStart.emplace(pTimerStart, parentHandle);
+            }
+            else if (it->second != parentHandle)
+            {
+                cudaGraphDetected = true;
+                break;
+            }
+        }
+        if (cudaGraphDetected) break;
+    }
+
+    if (cudaGraphDetected)
+    {
+        commState->scaleUpExecMode.store(static_cast<uint8_t>(CommunicatorState::ScaleUpExecMode::CUDA_GRAPH),
+                                         std::memory_order_release);
+        OTEL_TRACE(NCCL_INIT, "Scale-up communicator classified: commHash=%lu mode=%s",
+                   (unsigned long)commState->comm_hash, commState->getScaleUpExecModeString());
+    }
+    else if (execMode == CommunicatorState::ScaleUpExecMode::UNKNOWN && (sawAnyCollPTimerStart || sawAnyKernelCh))
+    {
+        commState->scaleUpExecMode.store(static_cast<uint8_t>(CommunicatorState::ScaleUpExecMode::NON_CUDA_GRAPH),
+                                         std::memory_order_release);
+        OTEL_TRACE(NCCL_INIT, "Scale-up communicator classified: commHash=%lu mode=%s",
+                   (unsigned long)commState->comm_hash, commState->getScaleUpExecModeString());
+    }
+}
+
+/**
+ * @brief Link stored ProxyOps to their parent operations and transfer aggregates.
+ */
+void WindowAggregator::linkProxyOpsToParents()
+{
+#ifdef PROFILER_OTEL_ENABLE_TRACE
+    int proxyOpsWithTransfers    = 0;
+    int proxyOpsWithoutTransfers = 0;
+#endif
+
     for (const auto& proxyPair : proxyOps)
     {
         const otelEventHandle_t& proxyOp = proxyPair.second;
@@ -450,6 +743,9 @@ void WindowAggregator::finalize()
                 auto collIt = collHandleToOp.find(parentHandle);
                 if (collIt != collHandleToOp.end())
                 {
+                    collIt->second.totalTransferCount += transfers.count;
+                    collIt->second.totalTransferBytes += transfers.totalBytes;
+                    collIt->second.totalTransferTimeUs += transfers.totalTimeUs;
                     collectives[collIt->second.key].addTransferBatch(transfers.count, transfers.totalBytes,
                                                                      transfers.totalTimeUs);
 
@@ -462,8 +758,15 @@ void WindowAggregator::finalize()
                 auto p2pIt = p2pHandleToOp.find(parentHandle);
                 if (p2pIt != p2pHandleToOp.end())
                 {
-                    p2ps[p2pIt->second.key].addTransferBatch(transfers.count, transfers.totalBytes,
-                                                             transfers.totalTimeUs);
+                    p2pIt->second.totalTransferCount += transfers.count;
+                    p2pIt->second.totalTransferBytes += transfers.totalBytes;
+                    p2pIt->second.totalTransferTimeUs += transfers.totalTimeUs;
+
+                    if (!alltoAllP2PHandles.count(parentHandle))
+                    {
+                        p2ps[p2pIt->second.key].addTransferBatch(transfers.count, transfers.totalBytes,
+                                                                 transfers.totalTimeUs);
+                    }
 
                     OTEL_TRACE(NCCL_INIT, "Linked ProxyOp %p to P2P %s: bytes=%zu, time=%.2f us", proxyOpHandle,
                                p2pIt->second.key.c_str(), transfers.totalBytes, transfers.totalTimeUs);
@@ -471,24 +774,28 @@ void WindowAggregator::finalize()
             }
 
             // Aggregate for rank/channel metrics (for ALL ProxyOps, with or without parent)
-            uint64_t commHash           = proxyOp.commState ? proxyOp.commState->comm_hash : 0;
-            std::string rankTransferKey = getRankTransferKey(commHash, proxyOp.proxyOp.peer, proxyOp.commState);
-            rankTransfers[rankTransferKey].totalBytes += transfers.totalBytes;
-            rankTransfers[rankTransferKey].totalTimeUs += transfers.totalTimeUs;
-            rankTransfers[rankTransferKey].count += transfers.count;
+            uint64_t commHash  = proxyOp.commState ? proxyOp.commState->comm_hash : 0;
+            bool isP2PTransfer = isP2POperation(parentHandle, proxyOp.commState);
+            std::string rankTransferKey =
+                getRankTransferKey(commHash, proxyOp.proxyOp.peer, proxyOp.commState, isP2PTransfer);
+            AggregatedTransfer& rankTransfer = rankTransfers[rankTransferKey];
+            rankTransfer.totalBytes += transfers.totalBytes;
+            rankTransfer.totalTimeUs += transfers.totalTimeUs;
+            rankTransfer.count += transfers.count;
             // Merge the individual ProxyStep data points from this ProxyOp
-            rankTransfers[rankTransferKey].lr.merge(transfers.lr);
+            rankTransfer.lr.merge(transfers.lr);
             // Merge transfer intervals for bandwidth calculation based on active transfer time
-            rankTransfers[rankTransferKey].mergeIntervals(transfers);
+            rankTransfer.mergeIntervals(transfers);
 
-            std::string channelTransferKey = getChannelTransferKey(proxyOp);
-            channelTransfers[channelTransferKey].totalBytes += transfers.totalBytes;
-            channelTransfers[channelTransferKey].totalTimeUs += transfers.totalTimeUs;
-            channelTransfers[channelTransferKey].count += transfers.count;
+            std::string channelTransferKey      = getChannelTransferKey(proxyOp, isP2PTransfer);
+            AggregatedTransfer& channelTransfer = channelTransfers[channelTransferKey];
+            channelTransfer.totalBytes += transfers.totalBytes;
+            channelTransfer.totalTimeUs += transfers.totalTimeUs;
+            channelTransfer.count += transfers.count;
             // Merge the individual ProxyStep data points from this ProxyOp
-            channelTransfers[channelTransferKey].lr.merge(transfers.lr);
+            channelTransfer.lr.merge(transfers.lr);
             // Merge transfer intervals for bandwidth calculation based on active transfer time
-            channelTransfers[channelTransferKey].mergeIntervals(transfers);
+            channelTransfer.mergeIntervals(transfers);
         }
         else
         {
@@ -501,7 +808,6 @@ void WindowAggregator::finalize()
     }
 
 #ifdef PROFILER_OTEL_ENABLE_TRACE
-    // Log summary of ProxyOp linking (only if there are issues)
     if (proxyOpsWithoutTransfers > 0)
     {
         OTEL_TRACE(NCCL_INIT,
@@ -513,96 +819,67 @@ void WindowAggregator::finalize()
         OTEL_TRACE(NCCL_INIT, "Finalized ProxyOps: %d with transfers", proxyOpsWithTransfers);
     }
 #endif
+}
 
-    // Phase 2: Calculate correct Coll durations
-    // Normal case (scale-out): startTs -> lastProxyOpEnd (when ProxyOps exist)
-    // Scale-up (no ProxyOps): handled separately via finalizeScaleUpOperations()
-    for (auto& pair : collHandleToOp)
+/**
+ * @brief Finalize operations backed by observed ProxyOp transfer data.
+ *
+ * @param[in,out] handleToOp Map of root handles to in-progress operations.
+ * @param[in] isColl True for collective operations, false for P2P operations.
+ */
+void WindowAggregator::finalizeOperationsWithProxyData(std::map<const void*, InProgressOperation>& handleToOp,
+                                                       bool isColl)
+{
+    for (auto& pair : handleToOp)
     {
+        if (!isColl && alltoAllP2PHandles.count(pair.first)) continue;
+
         InProgressOperation& op = pair.second;
 
-        if (op.seenProxyOps > 0)
-        {
-            double realDuration = op.lastProxyOpEnd - op.startTs;
-            OTEL_TRACE(NCCL_INIT,
-                       "Finalized Coll: %s, bytes=%zu, duration=%.2f us (start=%.2f, lastProxyOpEnd=%.2f, proxyOps=%d)",
-                       op.key.c_str(), op.bytes, realDuration, op.startTs, op.lastProxyOpEnd, op.seenProxyOps);
+        if (op.seenProxyOps <= 0) continue;
 
-            if (realDuration <= 0)
-            {
-                OTEL_WARN(NCCL_INIT, "Skipping Coll with invalid duration=%.2f us: %s, bytes=%zu", realDuration,
-                          op.key.c_str(), op.bytes);
-                continue;
-            }
+        double realDuration = op.lastProxyOpEnd - op.startTs;
+        OTEL_TRACE(NCCL_INIT,
+                   "Finalized %s: %s, bytes=%zu, duration=%.2f us (start=%.2f, lastProxyOpEnd=%.2f, proxyOps=%d)",
+                   isColl ? "Coll" : "P2P", op.key.c_str(), op.bytes, realDuration, op.startTs, op.lastProxyOpEnd,
+                   op.seenProxyOps);
+
+        if (realDuration <= 0)
+        {
+            OTEL_WARN(NCCL_INIT, "Skipping %s with invalid duration=%.2f us: %s, bytes=%zu", isColl ? "Coll" : "P2P",
+                      realDuration, op.key.c_str(), op.bytes);
+            continue;
+        }
+
+        if (isColl)
             collectives[op.key].addCollective(op.bytes, realDuration);
-        }
-        // seenProxyOps == 0 is handled by finalizeScaleUpOperations() below
-    }
-
-    // Same for P2P
-    for (auto& pair : p2pHandleToOp)
-    {
-        InProgressOperation& op = pair.second;
-
-        if (op.seenProxyOps > 0)
-        {
-            double realDuration = op.lastProxyOpEnd - op.startTs;
-            OTEL_TRACE(NCCL_INIT, "Finalized P2P: %s, bytes=%zu, duration=%.2f us (proxyOps=%d)", op.key.c_str(),
-                       op.bytes, realDuration, op.seenProxyOps);
-
-            if (realDuration <= 0)
-            {
-                OTEL_WARN(NCCL_INIT, "Skipping P2P with invalid duration=%.2f us: %s, bytes=%zu", realDuration,
-                          op.key.c_str(), op.bytes);
-                continue;
-            }
+        else
             p2ps[op.key].addP2P(op.bytes, realDuration);
-        }
-        // seenProxyOps == 0 is handled by finalizeScaleUpOperations() below
     }
+}
 
-    // =========================================================================
-    // Phase 3: Scale-up inference for operations without ProxyOps
-    // When no proxy operations exist (scale-up path), use KernelCh events
-    // and collective metadata to infer transfer metrics.
-    // =========================================================================
-    finalizeScaleUpOperations(collHandleToOp, true);
-    finalizeScaleUpOperations(p2pHandleToOp, false);
-
-    // =========================================================================
-    // Phase 4: Synthesize Collective metrics for AlltoAll-style operations.
-    //
-    // NCCL decomposes AlltoAll (and similar collectives) into individual P2P
-    // Send tasks.  Each task gets its own P2P metric, but the high-level
-    // AlltoAll operation is invisible in the Collective section of the dashboard.
-    //
-    // When ncclProfileP2pApi events are tracked (one per AlltoAll call), all
-    // corresponding P2P Send events share the same P2pApi handle as parentObj.
-    // This phase groups those sends back into a single Collective entry so
-    // AlltoAll operations appear in the Collective dashboard section.
-    //
-    // - Total bytes  = sum of bytes across all P2P Sends in the group.
-    // - Start time   = earliest P2P Send start among the group.
-    // - End time     = latest ProxyOp end (or P2P stop if no ProxyOps) in the group.
-    // - Transfer data is accumulated from the per-peer p2ps entries (already finalized
-    //   in Phase 2 above).
-    // =========================================================================
-    for (const auto& apiPair : p2pHandlesByApiHandle)
+/**
+ * @brief Synthesize grouped AlltoAll collectives from grouped P2P windows.
+ *
+ * @param[in] alltoAllGroups Group event to P2P membership mapping.
+ * @param[in] alltoAllExpectedSendCounts Expected send fan-out for each group.
+ */
+void WindowAggregator::reconstructGroupedAlltoAllOperations(
+    const std::map<const void*, std::vector<const void*>>& alltoAllGroups,
+    const std::map<const void*, size_t>& alltoAllExpectedSendCounts)
+{
+    for (const auto& groupPair : alltoAllGroups)
     {
-        const void* apiHandle                      = apiPair.first;
-        const std::vector<const void*>& p2pHandles = apiPair.second;
+        const std::vector<const void*>& p2pHandles = groupPair.second;
+        const size_t expectedSendCount             = alltoAllExpectedSendCounts.at(groupPair.first);
 
-        auto funcIt = p2pApiHandleToFunc.find(apiHandle);
-        if (funcIt == p2pApiHandleToFunc.end()) continue;
-        const std::string& funcName = funcIt->second;
-
-        // Compute AlltoAll collective timing and bytes across all grouped P2P Sends.
         size_t totalBytes          = 0;
         double startTs             = std::numeric_limits<double>::max();
         double endTs               = 0.0;
         int totalTransferCount     = 0;
         size_t totalTransferBytes  = 0;
         double totalTransferTimeUs = 0.0;
+        size_t trackedSendCount    = 0;
 
         const otelEventHandle_t* firstEvent = nullptr;
         for (const void* p2pHandle : p2pHandles)
@@ -613,62 +890,70 @@ void WindowAggregator::finalize()
             if (!firstEvent) firstEvent = static_cast<const otelEventHandle_t*>(p2pHandle);
 
             totalBytes += op.bytes;
+            trackedSendCount++;
             startTs = std::min(startTs, op.startTs);
 
             double opEnd = (op.seenProxyOps > 0) ? op.lastProxyOpEnd : op.endTs;
             endTs        = std::max(endTs, opEnd);
 
-            // Accumulate transfer statistics from the per-peer p2ps entries that
-            // were finalized in Phase 2.  The transfer data is already present there
-            // regardless of whether we also export it per-peer via P2P metrics.
-            auto p2pIt = p2ps.find(op.key);
-            if (p2pIt != p2ps.end())
-            {
-                totalTransferCount += p2pIt->second.cachedTotalTransferCount;
-                totalTransferBytes += p2pIt->second.cachedTotalTransferBytes;
-                totalTransferTimeUs += p2pIt->second.cachedTotalTransferTimeUs;
-            }
+            totalTransferCount += op.totalTransferCount;
+            totalTransferBytes += op.totalTransferBytes;
+            totalTransferTimeUs += op.totalTransferTimeUs;
+        }
+
+        if (expectedSendCount > trackedSendCount && trackedSendCount > 0)
+        {
+            const size_t representativeBytes = totalBytes / trackedSendCount;
+            totalBytes += (expectedSendCount - trackedSendCount) * representativeBytes;
         }
 
         if (!firstEvent || !firstEvent->commState) continue;
 
-        // Only synthesize Collective metrics for communicators that are not pure P2P
-        // (nranks == 2, CommType::P2P).  Explicit ncclSend/ncclRecv on a 2-rank
-        // pipeline-parallel communicator also produce P2pApi events (the same code
-        // path in NCCL is shared), so those must remain in the P2P section only.
-        if (firstEvent->commState->comm_type == CommunicatorState::CommType::P2P)
-        {
-            OTEL_TRACE(NCCL_INIT,
-                       "Skipping AlltoAll collective synthesis for P2P communicator (nranks=2, pipeline-parallel): "
-                       "func=%s, comm_hash=%lu",
-                       funcName.c_str(), firstEvent->commState->comm_hash);
-            continue;
-        }
-
         double duration = endTs - startTs;
         if (startTs >= endTs || duration <= 0)
         {
-            OTEL_WARN(NCCL_INIT, "Skipping AlltoAll collective synthesis with invalid duration=%.2f us (func=%s)",
-                      duration, funcName.c_str());
+            OTEL_WARN(NCCL_INIT, "Skipping AlltoAll collective synthesis with invalid duration=%.2f us", duration);
             continue;
         }
 
-        // Build collective key: Comm<hash>_<func>_<nranks>Ranks
-        // Using nranks instead of algo/proto (unavailable for AlltoAll-as-P2P).
-        std::stringstream ss;
-        ss << "Comm" << firstEvent->commState->comm_hash << "_" << funcName << "_" << firstEvent->commState->nranks
-           << "Ranks";
-        std::string collKey = ss.str();
+        std::string collKey;
+        collKey.reserve(32);
+        appendCommPrefix(collKey, firstEvent->commState->comm_hash);
+        collKey.append("_AlltoAll_");
+        appendInteger(collKey, firstEvent->commState->nranks);
+        collKey.append("Ranks");
 
-        collectives[collKey].addCollective(totalBytes, duration);
+        AggregatedCollective& collective = collectives[collKey];
+        collective.addCollective(totalBytes, duration);
         if (totalTransferCount > 0)
         {
-            collectives[collKey].addTransferBatch(totalTransferCount, totalTransferBytes, totalTransferTimeUs);
+            collective.addTransferBatch(totalTransferCount, totalTransferBytes, totalTransferTimeUs);
         }
 
-        OTEL_TRACE(NCCL_INIT, "Synthesized AlltoAll collective: key=%s, bytes=%zu, duration=%.2f us, transfers=%d",
-                   collKey.c_str(), totalBytes, duration, totalTransferCount);
+        OTEL_TRACE(NCCL_INIT,
+                   "Synthesized AlltoAll collective: key=%s, bytes=%zu, duration=%.2f us, transfers=%d, group=%p",
+                   collKey.c_str(), totalBytes, duration, totalTransferCount, groupPair.first);
     }
+}
+
+/**
+ * @brief Finalize aggregation and materialize export-ready operation summaries.
+ */
+void WindowAggregator::finalize()
+{
+    OTEL_TRACE(NCCL_INIT, "Finalizing: %zu ProxyOps, %zu ProxyOp transfers", proxyOps.size(), proxyOpTransfers.size());
+
+    std::map<const void*, std::vector<const void*>> alltoAllGroups;
+    std::map<const void*, size_t> alltoAllExpectedSendCounts;
+    identifyGroupedAlltoAllOperations(alltoAllGroups, alltoAllExpectedSendCounts);
+
+    classifyScaleUpCommunicatorExecutionMode();
+    linkProxyOpsToParents();
+    finalizeOperationsWithProxyData(collHandleToOp, true);
+    finalizeOperationsWithProxyData(p2pHandleToOp, false);
+    finalizeScaleUpOperations(collHandleToOp, true);
+    finalizeScaleUpOperations(p2pHandleToOp, false);
+    reconstructGroupedAlltoAllOperations(alltoAllGroups, alltoAllExpectedSendCounts);
 }
 
 /**
@@ -699,282 +984,130 @@ const void* WindowAggregator::getRootCollectiveHandle(const void* parentObj) con
     return nullptr;  // Not found or not a tracked operation
 }
 
-std::string WindowAggregator::getScaleUpRankTransferKey(const CommunicatorState* commState, int peer) const
+/**
+ * @brief Determine whether a transfer should use P2P key semantics.
+ *
+ * @param[in] rootHandle Root collective or P2P handle, if known.
+ * @param[in] commState Communicator state used as a fallback when no root handle exists.
+ *
+ * @return true when the transfer belongs to a P2P operation.
+ */
+bool WindowAggregator::isP2POperation(const void* rootHandle, const CommunicatorState* commState) const
 {
-    uint64_t commHash = commState ? commState->comm_hash : 0;
-    return getRankTransferKey(commHash, peer, commState);
+    if (rootHandle)
+    {
+        if (collHandleToOp.count(rootHandle)) return false;
+        if (alltoAllP2PHandles.count(rootHandle)) return false;
+        if (p2pHandleToOp.count(rootHandle)) return true;
+    }
+
+    return commState && commState->comm_type == CommunicatorState::CommType::P2P;
 }
 
+/**
+ * @brief Count send-direction P2P API markers associated with a group window.
+ *
+ * @param[in] groupEvent Group event delimiting the window of interest.
+ *
+ * @return Number of send-side P2P API markers associated with the group.
+ */
+size_t WindowAggregator::countGroupSendP2pApis(const otelEventHandle_t& groupEvent) const
+{
+    double previousGroupEndTs = -std::numeric_limits<double>::infinity();
+    for (const otelEventHandle_t* otherGroup : groupEvents)
+    {
+        if (!otherGroup || otherGroup == &groupEvent) continue;
+        if (otherGroup->commState != groupEvent.commState) continue;
+        if (otherGroup->endTs > groupEvent.startTs) continue;
+        previousGroupEndTs = std::max(previousGroupEndTs, otherGroup->endTs);
+    }
+
+    size_t sendApiCount = 0;
+    for (const otelEventHandle_t* apiEvent : p2pApiEvents)
+    {
+        if (!apiEvent || apiEvent->commState != groupEvent.commState) continue;
+        if (apiEvent->startTs <= previousGroupEndTs || apiEvent->startTs > groupEvent.startTs) continue;
+        if (!apiEvent->p2pApi.func || strstr(apiEvent->p2pApi.func, "Send") == nullptr) continue;
+        sendApiCount++;
+    }
+    return sendApiCount;
+}
+
+/**
+ * @brief Check whether a grouped set of P2P children matches an AlltoAll pattern.
+ *
+ * @param[in] groupEvent Group event delimiting the candidate AlltoAll window.
+ * @param[in] p2pHandles Candidate P2P child handles within the group window.
+ * @param[in] sendApiCount Number of send-side P2P API markers in the group.
+ *
+ * @return true when the group should be reconstructed as an AlltoAll collective.
+ */
+bool WindowAggregator::isAlltoAllGroup(const otelEventHandle_t& groupEvent, const std::vector<const void*>& p2pHandles,
+                                       size_t sendApiCount) const
+{
+    if (p2pHandles.empty()) return false;
+
+    const otelEventHandle_t* firstEvent = static_cast<const otelEventHandle_t*>(p2pHandles.front());
+    if (!firstEvent || !firstEvent->commState) return false;
+    if (firstEvent->commState != groupEvent.commState) return false;
+
+    const int nranks = firstEvent->commState->nranks;
+    if (nranks < 2) return false;
+
+    std::set<int> peers;
+    std::set<const void*> sendApiParents;
+    bool sawSelfSend = false;
+    for (const void* p2pHandle : p2pHandles)
+    {
+        auto opIt = p2pHandleToOp.find(p2pHandle);
+        if (opIt == p2pHandleToOp.end()) continue;
+
+        const otelEventHandle_t* p2pEvent = static_cast<const otelEventHandle_t*>(p2pHandle);
+        int commRank                      = p2pEvent->commState ? p2pEvent->commState->rank : p2pEvent->rank;
+
+        peers.insert(opIt->second.peer);
+        if (p2pEvent->parentObj) sendApiParents.insert(p2pEvent->parentObj);
+        if (opIt->second.peer == commRank) sawSelfSend = true;
+    }
+
+    if (sawSelfSend && static_cast<int>(peers.size()) == nranks) return true;
+
+    // Runtime AlltoAll windows omit the self-send P2P child because it never spawns
+    // proxy work, but the surrounding Group still contains one send-direction P2pApi
+    // marker per rank. Use that stable fan-out to recognize the collective shape.
+    return !sawSelfSend && static_cast<int>(peers.size()) == nranks - 1 && sendApiParents.size() == p2pHandles.size() &&
+           sendApiCount == sendApiParents.size() + 1;
+}
+
+/**
+ * @brief Build the rank-transfer key for a scale-up inferred transfer.
+ *
+ * @param[in] commState Communicator state owning the transfer.
+ * @param[in] peer Destination peer rank or pipeline.
+ * @param[in] isP2P Whether the transfer belongs to a P2P operation.
+ *
+ * @return Rank-transfer aggregation key.
+ */
+std::string WindowAggregator::getScaleUpRankTransferKey(const CommunicatorState* commState, int peer, bool isP2P) const
+{
+    uint64_t commHash = commState ? commState->comm_hash : 0;
+    return getRankTransferKey(commHash, peer, commState, isP2P);
+}
+
+/**
+ * @brief Build the channel-transfer key for a scale-up inferred transfer.
+ *
+ * @param[in] commState Communicator state owning the transfer.
+ * @param[in] peer Destination peer rank or pipeline.
+ * @param[in] channelId Logical channel identifier.
+ * @param[in] isP2P Whether the transfer belongs to a P2P operation.
+ *
+ * @return Channel-transfer aggregation key.
+ */
 std::string WindowAggregator::getScaleUpChannelTransferKey(const CommunicatorState* commState, int peer,
-                                                           uint8_t channelId) const
+                                                           uint8_t channelId, bool isP2P) const
 {
-    std::stringstream ss;
     uint64_t commHash = commState ? commState->comm_hash : 0;
 
-    bool isP2P = commState && commState->comm_type == CommunicatorState::CommType::P2P;
-
-    if (isP2P)
-    {
-        std::string hostname = commState ? commState->hostname : "unknown";
-        int src_pipeline     = commState ? commState->rank : rank;
-        ss << "Comm" << commHash << "_" << hostname << "_Pipeline" << src_pipeline << "_ToPipeline" << peer << "_Chnl"
-           << (int)channelId;
-    }
-    else
-    {
-        int comm_rank = commState ? commState->rank : rank;
-        ss << "Comm" << commHash << "_Rank" << comm_rank << "_ToPeer" << peer << "_Chnl" << (int)channelId;
-    }
-    return ss.str();
-}
-
-void WindowAggregator::finalizeScaleUpOperations(std::map<const void*, InProgressOperation>& handleToOp, bool isColl)
-{
-    double networkPct = (double)OTEL_GET_PARAM(ScaleUpNetworkPct);
-
-    // =========================================================================
-    // Select execution mode (CUDA Graph vs non-CUDA Graph)
-    //
-    // This uses the communicator-level classification performed in finalize().
-    // =========================================================================
-    CommunicatorState* commState = nullptr;
-    if (!handleToOp.empty())
-    {
-        const auto* eventPtr = static_cast<const otelEventHandle_t*>(handleToOp.begin()->first);
-        commState            = const_cast<CommunicatorState*>(eventPtr ? eventPtr->commState : nullptr);
-    }
-
-    const bool isCudaGraphDriven = commState && commState->isScaleUpCudaGraphDriven();
-
-    // =========================================================================
-    // Shared scale-up logic (both modes)
-    //
-    // Metric sources:
-    // - collectiveTimeUs:
-    //     start = Coll/P2P START timestamp (op.startTs)
-    //     end   = max KernelCh CPU endTs for that parent op (if present)
-    //     fallback = Coll/P2P STOP timestamp (op.endTs)
-    //
-    // - transfer sizes/counts (inferred):
-    //     inferCollectiveTransfers / inferP2PTransfers based on (func/algo/bytes/nRanks/nChannels, ScaleUpNetworkPct)
-    //
-    // Mode-specific behavior:
-    // - non-CUDA-Graph:
-    //     emits timing-derived intervals → bandwidth + latency + transfer time
-    // - CUDA-Graph-driven:
-    //     emits size/volume only (bytes + counts), suppresses timing-derived metrics
-    // =========================================================================
-    auto computeCollectiveTimeUs = [&](const void* opHandle, const InProgressOperation& op, bool& hasKernelEvents,
-                                       const std::vector<otelEventHandle_t>*& kernelEvents) -> double
-    {
-        auto kernelIt   = kernelChByParent.find(opHandle);
-        hasKernelEvents = (kernelIt != kernelChByParent.end() && !kernelIt->second.empty());
-        kernelEvents    = hasKernelEvents ? &kernelIt->second : nullptr;
-
-        double lastKernelEndTs = 0.0;
-        if (hasKernelEvents)
-        {
-            for (const auto& kch : kernelIt->second)
-                if (kch.endTs > lastKernelEndTs) lastKernelEndTs = kch.endTs;
-        }
-        return hasKernelEvents ? (lastKernelEndTs - op.startTs) : (op.endTs - op.startTs);
-    };
-
-    auto inferTransfers = [&](const InProgressOperation& op) -> InferredTransfers
-    {
-        if (isColl) return inferCollectiveTransfers(op.func, op.algo, op.bytes, op.nRanks, op.nChannels, networkPct);
-        return inferP2PTransfers(op.bytes, op.nChannels, networkPct);
-    };
-
-    auto recordCollectiveCountTime = [&](const InProgressOperation& op, double collectiveTimeUs)
-    {
-        if (isColl)
-            collectives[op.key].addCollective(op.bytes, collectiveTimeUs);
-        else
-            p2ps[op.key].addP2P(op.bytes, collectiveTimeUs);
-    };
-
-    auto recordTransferCacheBatch =
-        [&](const InProgressOperation& op, int numTransfers, size_t perTransferBytes, double perTransferTimeUs)
-    {
-        const size_t totalBytes = (size_t)numTransfers * perTransferBytes;
-        const double totalTime  = (double)numTransfers * perTransferTimeUs;
-        if (isColl)
-            collectives[op.key].addTransferBatch(numTransfers, totalBytes, totalTime);
-        else
-            p2ps[op.key].addTransferBatch(numTransfers, totalBytes, totalTime);
-    };
-
-    auto addRankChannelVolumeOnly =
-        [&](const void* opHandle, const InProgressOperation& op, const InferredTransfers& inf)
-    {
-        if (inf.numTransfers <= 0 || inf.perTransferBytes == 0) return;
-
-        const auto* eventPtr        = static_cast<const otelEventHandle_t*>(opHandle);
-        const CommunicatorState* cs = eventPtr ? eventPtr->commState : nullptr;
-        const int peer              = op.peer;
-
-        const size_t totalBytes = (size_t)inf.numTransfers * inf.perTransferBytes;
-        std::string rankKey     = getScaleUpRankTransferKey(cs, peer);
-        rankTransfers[rankKey].totalBytes += totalBytes;
-        rankTransfers[rankKey].count += inf.numTransfers;
-
-        // Distribute counts/bytes across channels without creating any time/intervals.
-        int nCh  = inf.numChannels > 0 ? inf.numChannels : 1;
-        int base = inf.numTransfers / nCh;
-        int rem  = inf.numTransfers % nCh;
-        for (int ch = 0; ch < nCh; ch++)
-        {
-            int transfersThisCh = base + (ch < rem ? 1 : 0);
-            if (transfersThisCh <= 0) continue;
-            std::string channelKey = getScaleUpChannelTransferKey(cs, peer, (uint8_t)ch);
-            channelTransfers[channelKey].totalBytes += (size_t)transfersThisCh * inf.perTransferBytes;
-            channelTransfers[channelKey].count += transfersThisCh;
-        }
-    };
-
-    for (auto& pair : handleToOp)
-    {
-        const void* opHandle    = pair.first;
-        InProgressOperation& op = pair.second;
-
-        if (op.seenProxyOps > 0) continue;
-
-        bool hasKernelEvents                               = false;
-        const std::vector<otelEventHandle_t>* kernelEvents = nullptr;
-        double collectiveTimeUs = computeCollectiveTimeUs(opHandle, op, hasKernelEvents, kernelEvents);
-
-        if (collectiveTimeUs <= 0)
-        {
-            OTEL_WARN(NCCL_INIT, "Skipping scale-up %s with invalid duration=%.2f us: %s, bytes=%zu",
-                      isColl ? "Coll" : "P2P", collectiveTimeUs, op.key.c_str(), op.bytes);
-            continue;
-        }
-
-        // Always export collective count/time.
-        recordCollectiveCountTime(op, collectiveTimeUs);
-
-        // Run inference to get transfer characteristics (sizes/counts + network fraction).
-        InferredTransfers inferred = inferTransfers(op);
-
-        if (inferred.numTransfers <= 0 || inferred.perTransferBytes == 0)
-        {
-            OTEL_TRACE(NCCL_INIT, "Scale-up %s (no inferred transfers): %s, bytes=%zu, duration=%.2f us",
-                       isColl ? "Coll" : "P2P", op.key.c_str(), op.bytes, collectiveTimeUs);
-            continue;
-        }
-
-        // CUDA Graph mode: size/volume only (no time, no intervals, no LR points).
-        if (isCudaGraphDriven)
-        {
-            recordTransferCacheBatch(op, inferred.numTransfers, inferred.perTransferBytes, 0.0 /*time*/);
-            addRankChannelVolumeOnly(opHandle, op, inferred);
-            OTEL_TRACE(NCCL_INIT, "CUDA-Graph scale-up %s (count + size/volume only): %s, bytes=%zu, duration=%.2f us",
-                       isColl ? "Coll" : "P2P", op.key.c_str(), op.bytes, collectiveTimeUs);
-            continue;
-        }
-
-        // Non-CUDA-Graph mode: emit timing-derived metrics.
-        double networkTime = collectiveTimeUs * inferred.networkTimeFraction;
-
-        // Channels operate in parallel: each channel independently steps through
-        // networkTime, so per-transfer time is based on per-channel steps only.
-        // numTransfers includes all channels (numChannels × stepsPerChannel), but
-        // dividing by numChannels gives the sequential steps within one channel.
-        int transfersPerChannel =
-            inferred.numChannels > 0 ? inferred.numTransfers / inferred.numChannels : inferred.numTransfers;
-        if (transfersPerChannel < 1) transfersPerChannel = 1;
-        double perTransferTime = networkTime / (double)transfersPerChannel;
-
-        OTEL_TRACE(NCCL_INIT,
-                   "Scale-up %s: %s, bytes=%zu, duration=%.2f us, networkTime=%.2f us, "
-                   "transfers=%d, perTransfer=%zu bytes / %.2f us, totalRankBytes=%zu, kernelEvents=%s",
-                   isColl ? "Coll" : "P2P", op.key.c_str(), op.bytes, collectiveTimeUs, networkTime,
-                   inferred.numTransfers, inferred.perTransferBytes, perTransferTime, inferred.totalRankBytes,
-                   hasKernelEvents ? "yes" : "no");
-
-        // Feed inferred transfers into the operation's transfer cache (one batch).
-        recordTransferCacheBatch(op, inferred.numTransfers, inferred.perTransferBytes, perTransferTime);
-
-        // =====================================================================
-        // Generate rank-level and channel-level transfer metrics from inferred data
-        // =====================================================================
-
-        // Find the commState from the operation's handle (stored in the event buffer)
-        const otelEventHandle_t* eventPtr  = static_cast<const otelEventHandle_t*>(opHandle);
-        const CommunicatorState* commState = eventPtr ? eventPtr->commState : nullptr;
-
-        // Use the peer from the operation (ring neighbor for Coll, explicit peer for P2P)
-        int peer = op.peer;
-
-        std::string rankKey = getScaleUpRankTransferKey(commState, peer);
-
-        // Synthesize transfer intervals spread across the collective timeline.
-        // All channels overlap in time, so wrap each transfer's index back into
-        // the per-channel window [op.startTs, op.startTs + networkTime] using
-        // modulo. This produces numTransfers data points for regression while
-        // keeping timestamps within the actual collective duration.
-        for (int i = 0; i < inferred.numTransfers; i++)
-        {
-            int step             = i % transfersPerChannel;
-            double intervalStart = op.startTs + (double)step * perTransferTime;
-            double intervalEnd   = intervalStart + perTransferTime;
-
-            rankTransfers[rankKey].addTransferWithTimestamps(inferred.perTransferBytes, perTransferTime, intervalStart,
-                                                             intervalEnd);
-        }
-
-        // Per-channel metrics: distribute transfers across channels
-        if (hasKernelEvents && kernelEvents)
-        {
-            // Use actual KernelCh events for per-channel breakdown.
-            // For the data points (bytes, time) that feed into linear regression and
-            // aggregate stats, we use the same evenly-divided perTransferTime as the
-            // rank level to avoid GPU timing jitter degrading the regression fit.
-            // The actual kernel event timestamps are still used for interval boundaries
-            // which feed into rate/bandwidth calculation via getActiveTime().
-            for (const auto& kch : *kernelEvents)
-            {
-                std::string channelKey = getScaleUpChannelTransferKey(commState, peer, kch.kernelCh.channelId);
-                double channelStartTs  = kch.startTs;
-                double channelEndTs    = kch.endTs;
-
-                double channelDuration = channelEndTs - channelStartTs;
-                if (channelDuration <= 0) channelDuration = perTransferTime * transfersPerChannel;
-
-                double perChannelIntervalTime = channelDuration / transfersPerChannel;
-
-                for (int i = 0; i < transfersPerChannel; i++)
-                {
-                    double intervalStart = channelStartTs + (double)i * perChannelIntervalTime;
-                    double intervalEnd   = intervalStart + perChannelIntervalTime;
-
-                    channelTransfers[channelKey].addTransferWithTimestamps(inferred.perTransferBytes, perTransferTime,
-                                                                           intervalStart, intervalEnd);
-                }
-            }
-        }
-        else
-        {
-            // No KernelCh events: divide evenly across nChannels.
-            // nCh and transfersPerChannel are already computed above.
-            int nCh = inferred.numChannels > 0 ? inferred.numChannels : 1;
-
-            for (int ch = 0; ch < nCh; ch++)
-            {
-                std::string channelKey = getScaleUpChannelTransferKey(commState, peer, (uint8_t)ch);
-
-                // Channels run in parallel: each independently spans [op.startTs, op.startTs + networkTime].
-                // Do not offset by ch — all channels start at op.startTs.
-                for (int i = 0; i < transfersPerChannel; i++)
-                {
-                    double intervalStart = op.startTs + (double)i * perTransferTime;
-                    double intervalEnd   = intervalStart + perTransferTime;
-
-                    channelTransfers[channelKey].addTransferWithTimestamps(inferred.perTransferBytes, perTransferTime,
-                                                                           intervalStart, intervalEnd);
-                }
-            }
-        }
-    }
+    return buildTransferKey(commHash, commState, rank, peer, isP2P, true, (int)channelId);
 }

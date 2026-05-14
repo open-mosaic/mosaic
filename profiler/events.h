@@ -88,8 +88,9 @@ typedef struct
         } kernelLaunch;
         struct
         {
-            // P2pApi: carries the original collective function name (e.g., "AlltoAll").
-            // Used as a grouping parent for P2P tasks decomposed from a collective call.
+            // P2pApi: per-peer metadata for P2P tasks that NCCL emitted from a higher-level call.
+            // Real AlltoAll traces emit one P2pApi marker per peer, so reconstruction should
+            // use the surrounding Group fan-out pattern rather than this handle directly.
             const char* func;
         } p2pApi;
     };

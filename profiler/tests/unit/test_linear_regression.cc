@@ -17,7 +17,6 @@ protected:
     {
         lr.clear();
     }
-    void TearDown() override {}
 };
 
 TEST_F(LinearRegressionTest, InitialState)
@@ -169,7 +168,6 @@ protected:
         lr_min = LinearRegression(LinearRegression::Mode::MIN);
         lr_min.clear();
     }
-    void TearDown() override {}
 };
 
 TEST_F(LinearRegressionMinModeTest, MinModeUsesMinimumTimePerSize)

@@ -11,6 +11,7 @@
 
 #include "../../events.h"
 #include "../../profiler_otel.h"
+#include "../test_helpers.h"
 
 class OtelProfilerInitTest : public ::testing::Test
 {
@@ -24,9 +25,8 @@ protected:
         setInitialized(0);
         otel_log_func = nullptr;
         setPid(0);
+        reset_unregister_communicator_tracking();
     }
-
-    void TearDown() override {}
 
     static void mock_logger(ncclDebugLogLevel level, unsigned long flags, const char* file, int line, const char* fmt,
                             ...)
@@ -219,4 +219,22 @@ TEST_F(OtelProfilerInitTest, StartTimeIsInitialized)
     EXPECT_GT(getStartTime(), baseTime - 1);
     EXPECT_LT(getStartTime(), baseTime + 1e9);
     EXPECT_GT(getStartTime(), 0.0);
+}
+
+TEST_F(OtelProfilerInitTest, FinalizeUnregistersCommunicatorBeforeDestroy)
+{
+    void* context       = nullptr;
+    int eActivationMask = 0;
+
+    ncclResult_t result = initProfiler(&context, &eActivationMask);
+    ASSERT_EQ(result, ncclSuccess);
+    ASSERT_NE(context, nullptr);
+
+    auto* ctx                    = static_cast<eventContext*>(context);
+    CommunicatorState* commState = ctx->commState;
+
+    EXPECT_EQ(0, get_unregister_communicator_call_count());
+    EXPECT_EQ(profiler_otel_finalize_v5(context), ncclSuccess);
+    EXPECT_EQ(1, get_unregister_communicator_call_count());
+    EXPECT_EQ(commState, get_last_unregistered_communicator());
 }

@@ -20,9 +20,6 @@
 
 class RaceConditionTest : public ::testing::Test
 {
-protected:
-    void SetUp() override {}
-    void TearDown() override {}
 };
 
 // Test: Multiple threads allocating from the same buffer simultaneously

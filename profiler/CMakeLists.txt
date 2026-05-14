@@ -11,6 +11,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/ProfilerCommon.cmake)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/ProfilerSources.cmake)
+
 # Build configuration
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
@@ -19,183 +22,12 @@ endif()
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -O3")
 set(CMAKE_CXX_FLAGS_DEBUG "-g")
 
-# Linux-only build: define NCCL_OS_LINUX unconditionally.
-# Required because nccl_profiler.h includes os.h, which gates
-# ncclSocketDescriptor / ncclAffinity behind NCCL_OS_LINUX.
-add_compile_definitions(NCCL_OS_LINUX)
-
-# GPU Platform selection: CUDA, ROCM, or AUTO (default: AUTO)
-if(NOT DEFINED GPU_PLATFORM)
-    set(GPU_PLATFORM "AUTO")
-endif()
-
-# ROCm path (default: /opt/rocm)
-if(NOT DEFINED ROCM_PATH)
-    set(ROCM_PATH "/opt/rocm")
-endif()
-
-# Platform detection and setup
-set(GPU_RUNTIME_FOUND FALSE)
-
-# Helper function to find CUDA
-function(find_cuda_runtime)
-    find_package(CUDAToolkit QUIET)
-    if(CUDAToolkit_FOUND)
-        message(STATUS "CUDA found at: ${CUDAToolkit_INCLUDE_DIRS}")
-        include_directories(${CUDAToolkit_INCLUDE_DIRS})
-        set(GPU_RUNTIME_FOUND TRUE PARENT_SCOPE)
-        set(GPU_RUNTIME_TYPE "CUDA" PARENT_SCOPE)
-        add_definitions(-DGPU_PLATFORM_CUDA)
-    else()
-        # Fallback to common CUDA paths
-        set(CUDA_PATHS
-            "/usr/local/cuda/include"
-            "/usr/local/cuda-13.0/include"
-            "/usr/local/cuda-13/include"
-            "/usr/local/cuda-12.9/include"
-            "/usr/local/cuda-12/include"
-            "/usr/local/cuda-11/include"
-            "/opt/cuda/include"
-            "/usr/include/cuda"
-        )
-
-        foreach(CUDA_PATH ${CUDA_PATHS})
-            if(EXISTS "${CUDA_PATH}/cuda_runtime.h")
-                message(STATUS "CUDA headers found at: ${CUDA_PATH}")
-                include_directories(${CUDA_PATH})
-                set(GPU_RUNTIME_FOUND TRUE PARENT_SCOPE)
-                set(GPU_RUNTIME_TYPE "CUDA" PARENT_SCOPE)
-                add_definitions(-DGPU_PLATFORM_CUDA)
-                return()
-            endif()
-        endforeach()
-    endif()
-endfunction()
-
-# Helper function to find ROCm/HIP
-function(find_rocm_runtime)
-    # Check for ROCm HIP runtime
-    set(ROCM_INCLUDE_PATH "${ROCM_PATH}/include")
-    set(HIP_INCLUDE_PATH "${ROCM_PATH}/include/hip")
-
-    if(EXISTS "${ROCM_INCLUDE_PATH}/hip/hip_runtime.h" OR EXISTS "${HIP_INCLUDE_PATH}/hip_runtime.h")
-        message(STATUS "ROCm/HIP found at: ${ROCM_PATH}")
-        include_directories(${ROCM_INCLUDE_PATH})
-        if(EXISTS "${HIP_INCLUDE_PATH}")
-            include_directories(${HIP_INCLUDE_PATH})
-        endif()
-        set(GPU_RUNTIME_FOUND TRUE PARENT_SCOPE)
-        set(GPU_RUNTIME_TYPE "ROCM" PARENT_SCOPE)
-        add_definitions(-DGPU_PLATFORM_ROCM)
-        add_definitions(-D__HIP_PLATFORM_AMD__)
-    else()
-        # Try alternative ROCm paths
-        set(ROCM_PATHS
-            "/opt/rocm"
-            "/opt/rocm-6.0"
-            "/opt/rocm-5.7"
-            "/opt/rocm-5.6"
-            "/usr/local/rocm"
-        )
-
-        foreach(ROCM_SEARCH_PATH ${ROCM_PATHS})
-            if(EXISTS "${ROCM_SEARCH_PATH}/include/hip/hip_runtime.h")
-                message(STATUS "ROCm/HIP headers found at: ${ROCM_SEARCH_PATH}")
-                include_directories("${ROCM_SEARCH_PATH}/include")
-                set(GPU_RUNTIME_FOUND TRUE PARENT_SCOPE)
-                set(GPU_RUNTIME_TYPE "ROCM" PARENT_SCOPE)
-                set(ROCM_PATH "${ROCM_SEARCH_PATH}" PARENT_SCOPE)
-                add_definitions(-DGPU_PLATFORM_ROCM)
-                add_definitions(-D__HIP_PLATFORM_AMD__)
-                return()
-            endif()
-        endforeach()
-    endif()
-endfunction()
-
-# Detect GPU runtime based on GPU_PLATFORM setting
-if(GPU_PLATFORM STREQUAL "CUDA")
-    message(STATUS "GPU Platform: CUDA (forced)")
-    find_cuda_runtime()
-    if(NOT GPU_RUNTIME_FOUND)
-        message(FATAL_ERROR "CUDA platform requested but CUDA headers not found.")
-    endif()
-elseif(GPU_PLATFORM STREQUAL "ROCM")
-    message(STATUS "GPU Platform: ROCm (forced)")
-    find_rocm_runtime()
-    if(NOT GPU_RUNTIME_FOUND)
-        message(FATAL_ERROR "ROCm platform requested but ROCm/HIP headers not found at ${ROCM_PATH}")
-    endif()
-else()
-    # AUTO detection: try CUDA first, then ROCm
-    message(STATUS "GPU Platform: AUTO (detecting...)")
-    find_cuda_runtime()
-    if(NOT GPU_RUNTIME_FOUND)
-        find_rocm_runtime()
-    endif()
-
-    if(NOT GPU_RUNTIME_FOUND)
-        message(WARNING "No GPU runtime (CUDA or ROCm) found. Build may fail.")
-    else()
-        message(STATUS "Auto-detected GPU Platform: ${GPU_RUNTIME_TYPE}")
-    endif()
-endif()
-
-# Compile-time TRACE gating (mirror NCCL's TRACE=1 behavior)
-# Enable by passing -DTRACE=ON or -DTRACE=1 to CMake
-option(TRACE "Enable trace logging (PROFILER_OTEL_TRACE active)" OFF)
-if(TRACE)
-  add_definitions(-DPROFILER_OTEL_ENABLE_TRACE)
-  message(STATUS "PROFILER OTEL TRACE enabled (TRACE=1)")
-else()
-  message(STATUS "PROFILER OTEL TRACE disabled (build without TRACE=1)")
-endif()
-
-# NCCL path detection
-function(DETECT_PATH name path)
-if (NOT DEFINED ${path})
-  message(FATAL_ERROR "${name} undefined, define ${path}")
-elseif(NOT EXISTS ${${path}})
-  message(FATAL_ERROR "${name} not found, ${path}=${${path}}")
-else()
-  message(STATUS "${name} found ${path}=${${path}}")
-endif()
-endfunction()
-
-# Set NCCL path from environment or command line
-if(NOT DEFINED NCCL_PATH)
-  set(NCCL_PATH $ENV{NCCL_PATH})
-endif()
-
-if(NOT NCCL_PATH)
-  message(FATAL_ERROR "NCCL_PATH not set. Please set environment variable NCCL_PATH or pass -DNCCL_PATH=<path> to cmake")
-endif()
-
-DETECT_PATH(NCCL NCCL_PATH)
-
-# NCCL include paths
-set(NCCL_SRC_INCLUDE_PATH ${NCCL_PATH}/src/include)
-set(NCCL_BUILD_INCLUDE_PATH ${NCCL_PATH}/build/include)
-set(NCCL_PLUGIN_INCLUDE_PATH ${NCCL_PATH}/src/include/plugin)
-
-# Check if paths exist
-if(NOT EXISTS ${NCCL_SRC_INCLUDE_PATH})
-  message(FATAL_ERROR "NCCL source include path not found: ${NCCL_SRC_INCLUDE_PATH}")
-endif()
-
-if(NOT EXISTS ${NCCL_BUILD_INCLUDE_PATH})
-  message(FATAL_ERROR "NCCL build include path not found: ${NCCL_BUILD_INCLUDE_PATH}")
-endif()
-
-if(NOT EXISTS ${NCCL_PLUGIN_INCLUDE_PATH})
-  message(FATAL_ERROR "NCCL plugin include path not found: ${NCCL_PLUGIN_INCLUDE_PATH}")
-endif()
-
-# Include NCCL directories
-include_directories(${NCCL_SRC_INCLUDE_PATH})
-include_directories(${NCCL_BUILD_INCLUDE_PATH})
-include_directories(${NCCL_PLUGIN_INCLUDE_PATH})
-include_directories(${CMAKE_CURRENT_SOURCE_DIR})
+profiler_set_platform_defaults()
+profiler_detect_gpu_runtime("")
+profiler_configure_trace("" "PROFILER OTEL TRACE enabled (TRACE=1)"
+                         "PROFILER OTEL TRACE disabled (build without TRACE=1)")
+profiler_configure_sampling_profile("")
+profiler_resolve_nccl_paths("" TRUE)
 
 # OpenTelemetry C++ SDK path (optional, for custom installations)
 # Can be set via -DOTEL_PATH=/path/to/opentelemetry-build
@@ -261,20 +93,21 @@ else()
 endif()
 
 
-# Source files
-SET(OTEL_SOURCES
-  aggregation.cc
-  communicator_state.cc
-  linear_regression.cc
-  nccl_plugin.cc
-  profiler_otel.cc
-  profiler_v4_compat.cc
-  telemetry.cc
-  telemetry_primer.cc
-)
+profiler_prefix_sources(OTEL_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}"
+                                                ${PROFILER_CORE_SOURCE_FILES}
+                                                ${PROFILER_TELEMETRY_SOURCE_FILES})
 
 # Create shared library
 add_library(nccl-profiler-otel SHARED ${OTEL_SOURCES})
+
+target_include_directories(nccl-profiler-otel PRIVATE
+    ${PROFILER_GPU_INCLUDE_DIRS}
+    ${PROFILER_NCCL_INCLUDE_DIRS}
+    ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(nccl-profiler-otel PRIVATE
+    NCCL_OS_LINUX
+    ${PROFILER_GPU_COMPILE_DEFINITIONS}
+    ${PROFILER_TRACE_COMPILE_DEFINITIONS})
 
 # Link OpenTelemetry libraries
 if(OTEL_FOUND)

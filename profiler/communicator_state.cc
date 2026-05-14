@@ -18,6 +18,8 @@ CommunicatorState::CommunicatorState()
     : buffers(nullptr),
       active_buffer_idx(0),
       next_element_idx(0),
+      active_group_handle(nullptr),
+      active_group_depth(0),
       comm_name(nullptr),
       comm_hash(0),
       rank(0),
