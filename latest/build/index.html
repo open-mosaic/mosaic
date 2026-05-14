@@ -1919,14 +1919,14 @@ for more details</p>
 </ul>
 <h4 id="linear-regression-configuration">Linear Regression Configuration<a class="headerlink" href="#linear-regression-configuration" title="Permanent link">#</a></h4>
 <ul>
-<li><strong><code>NCCL_PROFILER_LINEAR_REGRESSION_MODE</code></strong> (default: <code>MIN</code>)<ul>
+<li><strong><code>NCCL_PROFILER_LINEAR_REGRESSION_MODE</code></strong> (default: <code>AVG</code>)<ul>
 <li>Controls how latency/rate are estimated from transfer size/time samples</li>
 <li>Supported values:<ul>
-<li><code>MIN</code>: for each transfer size, keep the minimum time observed (more robust to jitter)</li>
 <li><code>AVG</code>: use all points as observed</li>
+<li><code>MIN</code>: for each transfer size, keep the minimum time observed (more robust to jitter)</li>
 </ul>
 </li>
-<li>Example: <code>export NCCL_PROFILER_LINEAR_REGRESSION_MODE=MIN</code></li>
+<li>Example: <code>export NCCL_PROFILER_LINEAR_REGRESSION_MODE=AVG</code></li>
 </ul>
 </li>
 </ul>
