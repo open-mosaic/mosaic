@@ -18,7 +18,7 @@ from workload.workload import WorkloadStatus
 # =============================================================================
 # NCCL Profiler Telemetry Tests
 # =============================================================================
-
+WORKLOAD_TIMEOUT = 600 # 10 minutes
 
 @pytest.mark.profiler_otel
 class TestNCCLProfilerTelemetry:
@@ -95,7 +95,8 @@ class TestNCCLProfilerTelemetry:
         workload.start()
 
         # wait for workload to complete
-        workload.wait_for_completion(timeout=600)
+        is_done = workload.wait_for_completion(timeout=WORKLOAD_TIMEOUT)
+        assert is_done is True, "Workload did not complete within timeout of {WORKLOAD_TIMEOUT} seconds"
 
         # get inference result
         workload_result = workload.get_result()
