@@ -32,7 +32,7 @@ jobs:
 
       - name: Prune Docker resources (scheduled runs only)
         if: github.event_name == 'schedule'
-        run: docker system prune --all --force
+        run: docker system prune --all --force --volumes
 
       - name: Run integration tests
         run: echo "HOME=$HOME" >> $GITHUB_ENV && make cleanup && make test
