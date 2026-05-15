@@ -20,6 +20,9 @@ from workload.inferencex_workload import InferencexWorkload
 # Constants
 # =============================================================================
 
+# Inferencex workload Docker exec timeout (seconds)
+DOCKER_EXEC_TIMEOUT = 1200
+
 # PROMPT = "Explain briefly the different LLM parallelization techniques."
 PROMPT = "How many oceans are there in the world?"
 
@@ -145,8 +148,6 @@ def vllm_ready(vllm_client: VllmClient) -> bool:
     return True
 
 
-
-
 @pytest.fixture(scope="session")
 def prompt_workload():
     """
@@ -160,7 +161,7 @@ def inferencex_workload():
     """
     Provide an inferencex workload.
     """
-    return InferencexWorkload()
+    return InferencexWorkload(docker_exec_timeout=DOCKER_EXEC_TIMEOUT)
 
 
 @pytest.fixture
