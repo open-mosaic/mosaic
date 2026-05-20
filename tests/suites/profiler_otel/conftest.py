@@ -11,9 +11,9 @@ import time
 
 import pytest
 
-from vllm import VllmClient, VllmConfig, InferenceResult
-from workload.prompt_workload import PromptWorkload
-from workload.inferencex_workload import InferencexWorkload
+from production_test_framework.vllm import VllmClient, VllmConfig
+from production_test_framework.workload.prompt_workload import PromptWorkload
+from production_test_framework.workload.inferencex_workload import InferencexWorkload
 
 
 # =============================================================================

@@ -11,9 +11,9 @@ import time
 import pytest
 import requests
 
+from production_test_framework.vllm import InferenceResult
+from production_test_framework.workload.workload import WorkloadStatus
 from profiler_otel.conftest import expected_nccl_profiler_metrics
-from vllm import InferenceResult
-from workload.workload import WorkloadStatus
 
 # =============================================================================
 # NCCL Profiler Telemetry Tests
