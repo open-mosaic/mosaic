@@ -30,6 +30,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          python-version: "3.14"
+
+      - name: Install integration test dependencies
+        run: cd suites && uv sync
+
       - name: Prune Docker resources (scheduled runs only)
         if: github.event_name == 'schedule'
         run: docker system prune --all --force --volumes
