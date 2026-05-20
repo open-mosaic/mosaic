@@ -820,45 +820,6 @@
   
 </li>
         
-          <li class="md-nav__item">
-  <a href="#advanced-usage" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Advanced usage
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Advanced usage">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#interactive-shell" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Interactive Shell
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#docker-privilege" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Docker Privilege
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
       </ul>
     </nav>
   
@@ -1216,45 +1177,6 @@
   
 </li>
         
-          <li class="md-nav__item">
-  <a href="#advanced-usage" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Advanced usage
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Advanced usage">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#interactive-shell" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Interactive Shell
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#docker-privilege" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Docker Privilege
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
       </ul>
     </nav>
   
@@ -1343,7 +1265,7 @@ SPDX-License-Identifier: Apache-2.0
 <div class="tabbed-block">
 <ul>
 <li>Nightly</li>
-<li>Maintainer-triggered</li>
+<li>Pull request creation and update</li>
 </ul>
 </div>
 <div class="tabbed-block">
@@ -1366,12 +1288,12 @@ SPDX-License-Identifier: Apache-2.0
 </span></code></pre></div>
 <h3 id="integration-tests_1">Integration Tests<a class="headerlink" href="#integration-tests_1" title="Permanent link">#</a></h3>
 <p>The integration tests validate the complete integration of all Open Mosaic components.
-They use the <a href="https://github.com/open-mosaic/production-test-framework">Production Test Framework</a> to control the test environment and execute the tests.</p>
+They make use of the <a href="https://github.com/open-mosaic/production-test-framework">Production Test Framework</a> to control the test environment and provide python interfaces to system components.</p>
 <h4 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">#</a></h4>
 <ul>
 <li><strong>make</strong> — Required to run the Makefile targets.</li>
 <li><strong>Docker</strong> and <strong>Docker Compose</strong> — Required to run the stack and test container.</li>
-<li><strong>production-test-framework Docker image</strong> — This image will be automatically pulled from Docker Hub or it can be built from the <a href="https://github.com/open-mosaic/production-test-framework">Production Test Framework</a> project.</li>
+<li><strong>uv</strong> and <strong>Python</strong> - Required to run the pytest-based integration tests. </li>
 </ul>
 <h4 id="integration-test-commands">Integration test commands<a class="headerlink" href="#integration-test-commands" title="Permanent link">#</a></h4>
 <div class="language-bash highlight"><span class="filename">Run the integration tests</span><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nb">cd</span><span class="w"> </span>tests
@@ -1383,44 +1305,6 @@ They use the <a href="https://github.com/open-mosaic/production-test-framework">
 <div class="language-bash highlight"><span class="filename">Run tests against an already running container stack</span><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>make<span class="w"> </span>run-tests
 </span></code></pre></div>
 <div class="language-bash highlight"><span class="filename">Shut down and clean up the container stack</span><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>make<span class="w"> </span>cleanup
-</span></code></pre></div>
-<h4 id="advanced-usage">Advanced usage<a class="headerlink" href="#advanced-usage" title="Permanent link">#</a></h4>
-<h5 id="interactive-shell">Interactive Shell<a class="headerlink" href="#interactive-shell" title="Permanent link">#</a></h5>
-<p>The production test framework container has an interactive shell that can be used for running one-off tests and troubleshooting problems with the tests or framework.
-To enter the shell, remove the <code>RUN_MAKE_TARGET</code> environment variable from <code>tests/docker-compose.yml</code>:
-<div class="language-diff highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="w"> </span> production-test-framework:
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w"> </span>   profiles: [&quot;test&quot;]
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w"> </span>   image: production-test-framework:latest
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w"> </span>   container_name: production-test-framework
-</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w"> </span>   environment:
-</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w"> </span>     - MOSAIC_PATH=${MOSAIC_PATH}
-</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="gd">-     - RUN_MAKE_TARGET=profiler-otel-test-only</span>
-</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="w"> </span>     - PYTEST_ADDOPTS=&quot;--junitxml=/app/results/results.xml&quot;
-</span></code></pre></div></p>
-<p>Running the <code>make test</code> command will start the container stack,
-and you will be dropped into a shell in the <code>production-test-framework</code> container that displays a help message for the most common testing targets.</p>
-<h5 id="docker-privilege">Docker Privilege<a class="headerlink" href="#docker-privilege" title="Permanent link">#</a></h5>
-<p>The host's Docker socket can be mounted into the container to run <code>docker</code> commands or perform other container stack analysis by adding a bind mount to <code>tests/docker-compose.yml</code>:</p>
-<div class="language-diff highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="w"> </span> production-test-framework:
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w"> </span>   profiles: [&quot;test&quot;]
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w"> </span>   image: production-test-framework:latest
-</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w"> </span>   container_name: production-test-framework
-</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w"> </span>   environment:
-</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="w"> </span>     - MOSAIC_PATH=${MOSAIC_PATH}
-</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="w"> </span>     - PYTEST_ADDOPTS=&quot;--junitxml=/app/results/results.xml&quot;
-</span><span id="__span-7-8"><a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="w"> </span>   network_mode: &quot;host&quot;
-</span><span id="__span-7-9"><a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="w"> </span>   volumes:
-</span><span id="__span-7-10"><a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="w"> </span>     - ./suites:/app/tests:ro
-</span><span id="__span-7-11"><a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a><span class="w"> </span>     - test-results:/app/results
-</span><span id="__span-7-12"><a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a><span class="gi">+     - /var/run/docker.sock:/var/run/docker.sock</span>
-</span></code></pre></div>
-<p>When the container stack is started, you will be able to run docker commands as <code>sudo</code> from inside the <code>production-test-framework</code> shell prompt:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>/app/framework<span class="w"> </span>$<span class="w"> </span>sudo<span class="w"> </span>docker<span class="w"> </span>ps<span class="w"> </span>--format<span class="w"> </span><span class="s2">&quot;{{.Names}}&quot;</span>
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>production-test-framework
-</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>mosaic-vllm
-</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>mosaic-pipeline-analyzer
-</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>mosaic-otel-lgtm
-</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>/app/framework<span class="w"> </span>$
 </span></code></pre></div>
 
 
