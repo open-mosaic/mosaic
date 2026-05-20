@@ -5,9 +5,15 @@ name = "mosaic-tests"
 version = "0.1.0"
 description = "Mosaic integration test suite"
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "production-test-framework",
+]
 
 [tool.pytest.ini_options]
+pythonpath = ["."]
 testpaths = ["."]
 python_files = "test_*.py"
 python_functions = "test_*"
+
+[tool.uv.sources]
+production-test-framework = { git = "https://github.com/open-mosaic/production-test-framework.git", tag = "v0.2.0" }

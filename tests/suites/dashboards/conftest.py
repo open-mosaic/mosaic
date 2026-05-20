@@ -44,7 +44,7 @@ def dashboards_dir() -> str:
     """
     Path to the dashboards directory (e.g. /mnt/dashboards when run in container).
     """
-    return os.getenv("DASHBOARDS_DIR", "/mnt/dashboards")
+    return os.getenv("DASHBOARDS_DIR", "../../deployments/dashboards")
 
 
 @pytest.fixture(scope="session")

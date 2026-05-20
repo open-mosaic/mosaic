@@ -3,4 +3,13 @@
 
 .DS_Store
 .venv/
+
+# Python bytecode and caches (anywhere in the repo)
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
 docs/site/**/*
