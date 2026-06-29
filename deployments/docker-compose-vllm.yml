@@ -22,7 +22,7 @@ services:
               capabilities: [gpu]
     # Required for multi-GPU NCCL communication
     ipc: host
-    command: ["vllm serve Qwen/Qwen3-8B --port 8080 --tensor-parallel-size 2 --gpu-memory-utilization 0.8 --disable-custom-all-reduce --enforce-eager"]
+    command: ["vllm serve Qwen/Qwen3-8B --port 8080 --tensor-parallel-size 2 --gpu-memory-utilization 0.8 --disable-custom-all-reduce --enforce-eager --enable-mfu-metrics"]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
