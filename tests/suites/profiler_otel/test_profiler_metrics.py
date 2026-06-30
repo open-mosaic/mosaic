@@ -10,15 +10,21 @@ import time
 
 import pytest
 import requests
-
 from production_test_framework.vllm import InferenceResult
 from production_test_framework.workload.workload import WorkloadStatus
+
 from profiler_otel.conftest import expected_nccl_profiler_metrics
 
 # =============================================================================
 # NCCL Profiler Telemetry Tests
 # =============================================================================
-WORKLOAD_TIMEOUT = 600 # 10 minutes
+WORKLOAD_TIMEOUT = 600  # 10 minutes
+
+# How long to wait for NCCL metrics to be scraped into Prometheus after a
+# workload completes, and how often to re-check while waiting.
+METRICS_AVAILABLE_TIMEOUT = 60  # seconds
+METRICS_POLL_INTERVAL = 2  # seconds
+
 
 @pytest.mark.profiler_otel
 class TestNCCLProfilerTelemetry:
@@ -96,7 +102,9 @@ class TestNCCLProfilerTelemetry:
 
         # wait for workload to complete
         is_done = workload.wait_for_completion(timeout=WORKLOAD_TIMEOUT)
-        assert is_done is True, "Workload did not complete within timeout of {WORKLOAD_TIMEOUT} seconds"
+        assert is_done is True, (
+            "Workload did not complete within timeout of {WORKLOAD_TIMEOUT} seconds"
+        )
 
         # get inference result
         workload_result = workload.get_result()
@@ -112,44 +120,64 @@ class TestNCCLProfilerTelemetry:
 
         print(f"  Workload runtime: {workload_result.runtime:.1f}s")
 
-        assert workload_result is not None and workload_result.status == WorkloadStatus.COMPLETED, "Inference must succeed before checking metrics"
-    
+        assert (
+            workload_result is not None
+            and workload_result.status == WorkloadStatus.COMPLETED
+        ), "Inference must succeed before checking metrics"
 
-        # The metrics results take about 10 seconds to become available in Prometheus.
-        time.sleep(10)
-
-        found_metrics = []
-        missing_metrics = []
+        # Metrics take time to be scraped into Prometheus after the workload
+        # finishes (empirically ~10s). Rather than sleeping a fixed amount, poll
+        # the expected metric set and record each metric as soon as it appears,
+        # returning immediately once all are present or once the timeout elapses.
         nccl_profiler_metrics = expected_nccl_profiler_metrics(workload)
 
-        for metric_name in nccl_profiler_metrics:
+        def metric_has_data(metric_name: str) -> bool:
+            """True when Prometheus has at least one series for *metric_name* in the workload window."""
             try:
                 response = requests.get(
                     f"{prometheus_url}/api/v1/query_range",
-                    params={"query": metric_name, "start": workload_result.start_time, "end": workload_result.end_time, "step": "1.0"},
+                    params={
+                        "query": metric_name,
+                        "start": workload_result.start_time,
+                        "end": workload_result.end_time,
+                        "step": "1.0",
+                    },
                     timeout=10,
                 )
-                if response.status_code == 200:
-                    data = response.json()
-                    if data.get("status") == "success":
-                        results = data.get("data", {}).get("result", [])
-                        if results:
-                            found_metrics.append(metric_name)
-                            print(f"    Found: {metric_name} ({len(results)} series)")
-                        else:
-                            missing_metrics.append(metric_name)
-                    else:
-                        missing_metrics.append(metric_name)
-                else:
-                    missing_metrics.append(metric_name)
             except requests.exceptions.RequestException:
-                missing_metrics.append(metric_name)
+                return False
+            if response.status_code != 200:
+                return False
+            data = response.json()
+            if data.get("status") != "success":
+                return False
+            return bool(data.get("data", {}).get("result", []))
 
-        print(f"\n  Found {len(found_metrics)}/{len(nccl_profiler_metrics)} NCCL profiler metrics")
+        found_metrics: list[str] = []
+        deadline = time.monotonic() + METRICS_AVAILABLE_TIMEOUT
+        while True:
+            # Only re-query metrics we have not seen yet; record each as it arrives.
+            for metric_name in nccl_profiler_metrics:
+                if metric_name not in found_metrics and metric_has_data(metric_name):
+                    found_metrics.append(metric_name)
+                    print(f"    Found: {metric_name}")
 
+            if (
+                len(found_metrics) == len(nccl_profiler_metrics)
+                or time.monotonic() >= deadline
+            ):
+                break
+            time.sleep(METRICS_POLL_INTERVAL)
+
+        missing_metrics = [m for m in nccl_profiler_metrics if m not in found_metrics]
+
+        print(
+            f"\n  Found {len(found_metrics)}/{len(nccl_profiler_metrics)} NCCL profiler metrics"
+        )
         if missing_metrics:
             print(f"  Missing metrics: {missing_metrics}")
 
-        assert len(found_metrics) == len(nccl_profiler_metrics), (
-            f"Expected {len(nccl_profiler_metrics)} metrics, found {len(found_metrics)}. Missing: {missing_metrics}"
+        assert not missing_metrics, (
+            f"Expected {len(nccl_profiler_metrics)} metrics, found {len(found_metrics)} "
+            f"within {METRICS_AVAILABLE_TIMEOUT}s. Missing: {missing_metrics}"
         )
