@@ -325,18 +325,6 @@ Host- and GPU-level context comes from third-party exporters (node-exporter, DCG
 - **node-exporter** — collectors and the metrics each one emits: <https://github.com/prometheus/node_exporter>
 - **process-exporter** (`namedprocess_*`): <https://github.com/ncabatoff/process-exporter>
 
-## Discovering all available metrics on a running system
-
-To list every metric name currently being scraped — across all exporters, whether or not a dashboard uses it — query Prometheus through the Grafana datasource proxy:
-
-```bash
-curl -s -u admin:admin \
-  "http://<grafana-url>/api/datasources/proxy/uid/prometheus/api/v1/label/__name__/values" \
-  | jq -r '.data[]'
-```
-
-Substitute the Grafana URL; `admin:admin` is the default dev credential. If Prometheus is reachable directly, the same list is available at `http://<prometheus-url>/api/v1/label/__name__/values`.
-
 ## Future improvements
 
 The metric tables above are maintained by hand. A better long-term approach is to generate them from Prometheus itself, which already carries each metric's name, type, and HELP description. The metadata endpoint (through the same proxy) returns exactly that:
