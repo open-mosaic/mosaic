@@ -236,3 +236,115 @@ The telemetry thread processes windows in multiple phases:
 4. **Channel Transfer Metrics**:
     - Average transfer size per channel
     - Average transfer time per channel
+
+# Metric Reference
+
+This section is the concrete counterpart to the categories in [Metric Types Exported](#metric-types-exported) above: it lists the actual metric names, types, units, and source files for everything the plugin exports, alongside the derived metrics (recording rules, pipeline analyzer) and third-party context metrics, as surfaced across the three profiler dashboards (`mosaic`, `nccl_profiler_comprehensive`, `nccl_troubleshooting`).
+
+> When labels are listed above a table, all metrics in that table share those labels.
+
+## Collective metrics
+
+**Source:** `profiler/telemetry_runtime.cc` (names/units/descriptions), `profiler/telemetry_export.cc` (labels)
+
+**Labels:** communicator, operation, rank, local_rank, hostname, gpu_pci_bus_id, gpu_uuid, comm_type
+
+| Metric | Type | Unit | Meaning |
+|---|---|---|---|
+| `nccl_profiler_collective_bytes` | Counter | bytes | Total bytes transferred in collective operations |
+| `nccl_profiler_collective_time` | Histogram | µs | Average time per collective operation |
+| `nccl_profiler_collective_count` | Histogram | count | Number of collective operations |
+| `nccl_profiler_collective_num_transfers` | Histogram (cond.) | count | Average number of transfers per collective |
+| `nccl_profiler_collective_transfer_size` | Histogram (cond.) | bytes | Average transfer size for collective |
+| `nccl_profiler_collective_transfer_time` | Histogram (cond.) | µs | Average transfer time for collective |
+
+## P2P metrics
+
+**Source:** `profiler/telemetry_runtime.cc`, `profiler/telemetry_export.cc`
+
+**Labels:** communicator, operation, rank, local_rank, hostname, gpu_pci_bus_id, gpu_uuid, comm_type
+
+| Metric | Type | Unit | Meaning |
+|---|---|---|---|
+| `nccl_profiler_p2p_bytes` | Histogram | bytes | Average bytes per P2P operation |
+| `nccl_profiler_p2p_time` | Histogram | µs | Average time per P2P operation |
+| `nccl_profiler_p2p_num_transfers` | Histogram (cond.) | count | Average number of transfers per P2P |
+| `nccl_profiler_p2p_transfer_size` | Histogram (cond.) | bytes | Average transfer size for P2P |
+| `nccl_profiler_p2p_transfer_time` | Histogram (cond.) | µs | Average transfer time for P2P |
+
+## Rank to rank (RTR) metrics
+
+**Source:** `profiler/telemetry_runtime.cc` + `profiler/telemetry_export.cc`
+
+**Labels:** communicator, source_rank, dest_rank, local_rank, hostname, gpu_pci_bus_id, gpu_uuid, comm_type
+
+| Metric | Type | Unit | Meaning |
+|---|---|---|---|
+| `nccl_profiler_rank_bytes` | Counter | bytes | Bytes sent from RTR |
+| `nccl_profiler_rank_latency` | Histogram (cond.) | µs | Latency from RTR (from linReg) |
+| `nccl_profiler_rank_rate` | Histogram (cond.) | MB/s | Transfer rate RTR (bandwidth from active transfer time) |
+
+## Per-channel transfer metrics
+
+**Source:** `profiler/telemetry_runtime.cc` + `profiler/telemetry_export.cc`
+
+**Labels:** communicator, source_rank, dest_rank, channel, local_rank, hostname, gpu_pci_bus_id, gpu_uuid, comm_type
+
+| Metric | Type | Unit | Meaning |
+|---|---|---|---|
+| `nccl_profiler_transfer_size` | Histogram | bytes | Average transfer size per channel |
+| `nccl_profiler_transfer_time` | Histogram | µs | Average transfer time per channel |
+| `nccl_profiler_transfer_latency` | Histogram (cond.) | µs | Transfer latency per channel (from linReg) |
+
+## Recording rules
+
+**Source:** `deployments/recording-rules.yaml`
+
+| Metric | Labels | Unit | Meaning |
+|---|---|---|---|
+| `mosaic_gpu_rank_mapping` | communicator, rank, hostname, gpu_pci_bus_id, gpu_uuid | | Maps each rank to its host/GPU (join key) |
+| `mosaic_gpu_pair_bw` | source/dest hostname + pci_bus_id | MB/s | Bandwidth per GPU pair (from `rank_rate`) |
+| `mosaic_gpu_pair_latency` | source/dest hostname + pci_bus_id | µs | Latency per GPU pair (from `rank_latency`) |
+| `mosaic_gpu_transfer_time` | source/dest hostname + pci_bus_id | µs | Transfer time per GPU pair (from `transfer_time`) |
+| `mosaic_cpu_util` | cpu, host | % | Per-CPU utilisation (from `node_cpu_seconds_total`) |
+
+## Pipeline & health metrics
+
+**Source:** `deployments/pipeline-analyzer/pipeline_server.py` (served at `/metrics/pipelines` and `/metrics/rank_mapping`)
+
+| Metric | Labels | Meaning |
+|---|---|---|
+| `nccl_pipeline_info` | pipeline_id, communicator, type, is_pipeline, connects_from, connects_to, from_gpu, to_gpu | Info metric (value = gpu_count), one row per communicator with its pipeline assignment |
+| `nccl_rank_pipeline_mapping` | pipeline_id, communicator, global_rank, local_rank, hostname, gpu_uuid, gpu_pci_bus_id, type | Info metric (value = 1). One row per (communicator, GPU) mapping rank to pipeline |
+
+## Context metrics
+
+Host- and GPU-level context comes from third-party exporters (node-exporter, DCGM-exporter, process-exporter), which expose far more metrics than any dashboard surfaces. There are too many to enumerate usefully here, so refer to the upstream docs, which stay current with the exporter versions we run:
+
+- **DCGM-exporter** — default metric set (each DCGM field ID with its Prometheus type and help text): <https://github.com/NVIDIA/dcgm-exporter/blob/main/etc/default-counters.csv>
+- **node-exporter** — collectors and the metrics each one emits: <https://github.com/prometheus/node_exporter>
+- **process-exporter** (`namedprocess_*`): <https://github.com/ncabatoff/process-exporter>
+
+## Discovering all available metrics on a running system
+
+To list every metric name currently being scraped — across all exporters, whether or not a dashboard uses it — query Prometheus through the Grafana datasource proxy:
+
+```bash
+curl -s -u admin:admin \
+  "http://<grafana-url>/api/datasources/proxy/uid/prometheus/api/v1/label/__name__/values" \
+  | jq -r '.data[]'
+```
+
+Substitute the Grafana URL; `admin:admin` is the default dev credential. If Prometheus is reachable directly, the same list is available at `http://<prometheus-url>/api/v1/label/__name__/values`.
+
+## Future improvements
+
+The metric tables above are maintained by hand. A better long-term approach is to generate them from Prometheus itself, which already carries each metric's name, type, and HELP description. The metadata endpoint (through the same proxy) returns exactly that:
+
+```bash
+curl -s -u admin:admin \
+  "http://<grafana-url>/api/datasources/proxy/uid/prometheus/api/v1/metadata" \
+  | jq
+```
+
+A small script could turn that JSON (name + type + help) into the tables in this doc, keeping the inventory in sync with whatever the exporters actually expose. Left as a future improvement.
