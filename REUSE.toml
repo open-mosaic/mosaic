@@ -11,7 +11,8 @@ path = [
     "deployments/dashboards/*.json",
     ".github/ISSUE_TEMPLATE/*.md",
     ".github/PULL_REQUEST_TEMPLATE.md",
-    "tests/suites/uv.lock"
+    "tests/suites/uv.lock",
+    "tests/fault-injection/screenshots/*.png"
 ]
 SPDX-FileCopyrightText = "2025 Delos Data Inc"
 SPDX-License-Identifier = "Apache-2.0"
