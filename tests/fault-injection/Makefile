@@ -75,8 +75,23 @@ arm_deadman = setsid sh -c "sleep $(DEADMAN); $(1)" >/dev/null 2>&1 & echo \$$! 
 # and workload depend on this so a missing/half-edited config fails loudly with
 # a clear message instead of silently targeting placeholder hosts.
 _check-config:
-	@if [ ! -f config.mk ]; then 	  echo "ERROR: config.mk not found. Run: cp config.mk.example config.mk  then edit it."; exit 1; fi
-	@bad=""; 	for v in $(NODES) $(COLLECTOR_HOST) $(IFACE); do 	  case "$$v" in node-a|node-b|eth0|otel-lgtm) bad="$$bad $$v";; esac; done; 	if [ -n "$$bad" ]; then 	  echo "ERROR: config.mk still has placeholder value(s):$$bad"; 	  echo "       Edit config.mk with your real cluster values (see config.mk.example)."; 	  echo "       If you edited it and still see this, check for DUPLICATE lines —"; 	  echo "       a later placeholder line overrides your value (last assignment wins)."; 	  exit 1; fi
+	@if [ ! -f config.mk ]; then \
+	  echo "ERROR: config.mk not found. Run: cp config.mk.example config.mk  then edit it."; \
+	  exit 1; \
+	fi
+	@bad=""; \
+	for v in $(NODES) $(COLLECTOR_HOST) $(IFACE); do \
+	  case "$$v" in \
+	    node-a|node-b|eth0|otel-lgtm) bad="$$bad $$v" ;; \
+	  esac; \
+	done; \
+	if [ -n "$$bad" ]; then \
+	  echo "ERROR: config.mk still has placeholder value(s):$$bad"; \
+	  echo "       Edit config.mk with your real cluster values (see config.mk.example)."; \
+	  echo "       If you edited it and still see this, check for DUPLICATE lines,"; \
+	  echo "       a later placeholder line overrides your value (last assignment wins)."; \
+	  exit 1; \
+	fi
 
 .PHONY: help status workload kill-workload watch restore \
         inject-netem-delay inject-netem-loss \

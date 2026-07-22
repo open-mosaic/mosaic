@@ -214,32 +214,9 @@ The telemetry thread processes windows in multiple phases:
 - Rank-to-rank metrics: total bytes, latency, rate (via linear regression)
 - Per-channel metrics: average transfer size and time
 
-## Metric Types Exported
-
-1. **Collective Metrics**:
-    - Average bytes per collective operation
-    - Average time per collective operation (START → Last ProxyOp STOP)
-    - Average number of transfers (ProxySteps) per collective
-    - Average transfer size and time
-
-2. **P2P Metrics**:
-    - Average bytes per P2P operation
-    - Average time per P2P operation
-    - Average number of transfers per P2P operation
-
-3. **Rank Transfer Metrics**:
-    - Total bytes transferred between ranks
-    - Latency (from linear regression intercept)
-    - Transfer rate in MB/s (from linear regression slope)
-    - **Note**: Keys include communicator hash prefix (e.g., `Comm<hash>_RankXToRankY`) to avoid collisions in pipeline parallelism scenarios
-
-4. **Channel Transfer Metrics**:
-    - Average transfer size per channel
-    - Average transfer time per channel
-
 # Metric Reference
 
-This section is the concrete counterpart to the categories in [Metric Types Exported](#metric-types-exported) above: it lists the actual metric names, types, units, and source files for everything the plugin exports, alongside the derived metrics (recording rules, pipeline analyzer) and third-party context metrics, as surfaced across the three profiler dashboards (`mosaic`, `nccl_profiler_comprehensive`, `nccl_troubleshooting`).
+This section lists the actual metric names, types, units, and source files for everything the plugin exports, alongside the derived metrics (recording rules, pipeline analyzer) and third-party context metrics, as surfaced across the three profiler dashboards (`mosaic`, `nccl_profiler_comprehensive`, `nccl_troubleshooting`). The tables are grouped by category — collective, P2P, rank-to-rank, per-channel — so the grouping doubles as the high-level overview.
 
 > When labels are listed above a table, all metrics in that table share those labels.
 
@@ -284,6 +261,8 @@ This section is the concrete counterpart to the categories in [Metric Types Expo
 | `nccl_profiler_rank_latency` | Histogram (cond.) | µs | Latency from RTR (from linReg) |
 | `nccl_profiler_rank_rate` | Histogram (cond.) | MB/s | Transfer rate RTR (bandwidth from active transfer time) |
 
+> **`rank_latency` and `rank_rate` are derived, not measured.** Both come from a per-size linear regression over transfer samples (`linear_regression.{h,cc}`): the intercept is latency, the slope is rate, computed in AVG mode (all points) or MIN mode (minimum time per size). Internally the regression keys carry the communicator hash prefix (`Comm<hash>_RankXToRankY`) so multiple communicators — e.g. under pipeline parallelism — don't collide; in Prometheus that same separation is carried by the `communicator` label.
+
 ## Per-channel transfer metrics
 
 **Source:** `profiler/telemetry_runtime.cc` + `profiler/telemetry_export.cc`
@@ -327,12 +306,4 @@ Host- and GPU-level context comes from third-party exporters (node-exporter, DCG
 
 ## Future improvements
 
-The metric tables above are maintained by hand. A better long-term approach is to generate them from Prometheus itself, which already carries each metric's name, type, and HELP description. The metadata endpoint (through the same proxy) returns exactly that:
-
-```bash
-curl -s -u admin:admin \
-  "http://<grafana-url>/api/datasources/proxy/uid/prometheus/api/v1/metadata" \
-  | jq
-```
-
-A small script could turn that JSON (name + type + help) into the tables in this doc, keeping the inventory in sync with whatever the exporters actually expose. Left as a future improvement.
+The metric tables above are maintained by hand and can drift from what the exporters actually expose. They could instead be generated from Prometheus's own metric metadata to keep the inventory in sync. Tracked in [#52](https://github.com/open-mosaic/mosaic/issues/52).

@@ -15,8 +15,16 @@
 # ── Cluster topology ─────────────────────────────────────────────────────────
 # Tip: if your OpenMosaic deployment already lists nodes in
 # deployments/file_sd_configs/, that's your NODES list.
+#
+# NOTE: IFACE is a single value applied to every node — the current
+# implementation assumes all nodes share the same interconnect interface name.
+# Per-node interface names are a future improvement.
+#
+# NOTE: RANK_HOSTS / RANK_GPUS are filled in by hand for now. They could be
+# auto-detected (e.g. from the launcher's rank assignment) in a future
+# improvement.
 NODES      := node-a node-b
-IFACE      := eth0                                   # interconnect NIC on each node
+IFACE      := eth0                                   # interconnect NIC (same on all nodes)
 RANK_HOSTS := 0:node-a 1:node-a 2:node-b 3:node-b    # rank -> node
 RANK_GPUS  := 0:0 1:1 2:0 3:1                         # rank -> local GPU index
 
@@ -35,7 +43,7 @@ WORKLOAD_LAUNCHER := mpirun
 
 MPI  := /opt/openmpi
 NN   := /home/user/nccl-tests            # dir holding the benchmark + plugins
-OTLP := http://node-a:4318               # collector OTLP endpoint
+OTLP := http://$(COLLECTOR_HOST):4318    # collector OTLP endpoint (reuses COLLECTOR_HOST)
 
 WORKLOAD_CMD := cd $(NN) && $(MPI)/bin/mpirun -np 4 -H node-a:2,node-b:2 \
   -mca coll_hcoll_enable 0 -mca btl_tcp_if_include $(IFACE) \
