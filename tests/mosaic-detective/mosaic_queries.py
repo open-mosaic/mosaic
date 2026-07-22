@@ -24,6 +24,14 @@ class MosaicClient:
         self.timeout = timeout
         self._session = session if session is not None else requests.Session()
 
+    def query_range(self, query: str, start, end, step: str = "15s") -> dict:
+        return self._get("/api/v1/query_range", {
+            "query": query,
+            "start": start,
+            "end": end,
+            "step": step,
+        })
+
     def _get(self, path: str, params: dict | None = None) -> dict:
         url = f"{self.base_url}{path}"
         try:

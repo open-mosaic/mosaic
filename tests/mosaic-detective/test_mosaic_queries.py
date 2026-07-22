@@ -40,7 +40,7 @@ def test_get_raises_on_connection_failure():
         client._get("/api/v1/query")
 
 
-def test_get_raises_on_http_failiure():
+def test_get_raises_on_http_failure():
     client = mq.MosaicClient(session=FakeSession(FakeResponse(500)))
 
     with pytest.raises(mq.MosaicQueryError):
@@ -53,3 +53,19 @@ def test_get_raises_on_prometheus_error_status():
 
     with pytest.raises(mq.MosaicQueryError):
         client._get("/api/v1/query")
+
+def test_query_range_calls_get_with_correct_params():
+    client = mq.MosaicClient(session=FakeSession(FakeResponse(json_data={})))
+
+    captured = {}
+    def fake_get(path, params=None):
+        captured["path"] = path
+        captured["params"] = params
+        return {"result": "sentinel"}
+    client._get = fake_get
+
+    result = client.query_range("up", start=100, end=200, step="15s")
+
+    assert captured["path"] == "/api/v1/query_range"
+    assert captured["params"] == {"query": "up", "start": 100, "end": 200, "step": "15s"}
+    assert result == {"result": "sentinel"}
