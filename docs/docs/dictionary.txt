@@ -88,3 +88,12 @@ rgc
 sm
 tsdb
 vrm
+flatline
+flatlines
+gitignored
+hostnames
+misconfigured
+ms
+sudo
+uplink
+vs
