@@ -103,3 +103,21 @@ def test_parse_range_builds_typed_series():
             values=[(1710000000.0, 1.0), (1710000015.0, 0.0)],
         )
     ]
+
+
+def test_parse_instant_sample():
+    raw = {
+        "resultType": "vector",
+        "result": [
+            {"metric": {"__name__": "up", "rank": "0"},
+             "value": [1710000000, "1"]},
+        ],
+    }
+    result = mq.parse_instant(raw)
+
+    assert result == [
+        mq.InstantSample(
+            labels={"__name__": "up", "rank": "0"},
+            value=(1710000000.0, 1.0),
+        )
+    ]

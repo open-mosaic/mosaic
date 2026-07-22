@@ -16,6 +16,11 @@ class RangeSeries:
     labels: dict
     values: list
 
+@dataclass
+class InstantSample:
+    labels: dict
+    value: tuple
+
 
 class MosaicQueryError(RuntimeError):
     """Raised for any transport, HTTP, or Prometheus-level query failure."""
@@ -71,4 +76,16 @@ def parse_range(data):
         labels = entry["metric"]
         values = [(float(ts), float(val)) for ts, val in entry["values"]]
         series_list.append(RangeSeries(labels, values))
+    return series_list
+
+def parse_instant(data):
+    series_list = []
+    for entry in data.get("result",[]):
+
+        labels = entry["metric"]
+        ts, val = entry["value"] 
+        value = (float(ts), float(val))    
+
+        series_list.append(InstantSample(labels, value))
+        
     return series_list
