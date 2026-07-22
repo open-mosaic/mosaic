@@ -8,6 +8,14 @@ import os
 
 import requests
 
+from dataclasses import dataclass
+
+
+@dataclass
+class RangeSeries:
+    labels: dict
+    values: list
+
 
 class MosaicQueryError(RuntimeError):
     """Raised for any transport, HTTP, or Prometheus-level query failure."""
@@ -55,3 +63,12 @@ class MosaicClient:
             raise MosaicQueryError(f"Prometheus query failed at {self.base_url}: {payload.get('error')}")
 
         return payload.get("data", {})
+
+
+def parse_range(data):
+    series_list = []
+    for entry in data.get("result", []):
+        labels = entry["metric"]
+        values = [(float(ts), float(val)) for ts, val in entry["values"]]
+        series_list.append(RangeSeries(labels, values))
+    return series_list

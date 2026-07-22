@@ -84,3 +84,22 @@ def test_query_instant_calls_get_with_correct_params():
     assert captured["path"] == "/api/v1/query"
     assert captured["params"] == {"query": "up", "time": 67}
     assert result == {"result": "sentinel"}
+
+
+def test_parse_range_builds_typed_series():
+    raw = {
+        "resultType": "matrix",
+        "result": [
+            {"metric": {"__name__": "up", "rank": "0"},
+             "values": [[1710000000, "1"], [1710000015, "0"]]},
+        ],
+    }
+
+    result = mq.parse_range(raw)
+
+    assert result == [
+        mq.RangeSeries(
+            labels={"__name__": "up", "rank": "0"},
+            values=[(1710000000.0, 1.0), (1710000015.0, 0.0)],
+        )
+    ]
