@@ -33,7 +33,6 @@ def test_get_raises_on_connection_failure():
     class DeadSession:
         def get(self, url, params=None, timeout=None):
             raise requests.exceptions.ConnectionError("refused")
-
     client = mq.MosaicClient(session=DeadSession())
 
     with pytest.raises(mq.MosaicQueryError):
@@ -68,4 +67,20 @@ def test_query_range_calls_get_with_correct_params():
 
     assert captured["path"] == "/api/v1/query_range"
     assert captured["params"] == {"query": "up", "start": 100, "end": 200, "step": "15s"}
+    assert result == {"result": "sentinel"}
+
+def test_query_instant_calls_get_with_correct_params():
+    client = mq.MosaicClient(session=FakeSession(FakeResponse(json_data={})))
+
+    captured = {}
+    def fake_get(path, params=None):
+        captured["path"] = path
+        captured["params"] = params
+        return {"result": "sentinel"}
+    client._get = fake_get
+
+    result = client.query_instant("up", 67)
+
+    assert captured["path"] == "/api/v1/query"
+    assert captured["params"] == {"query": "up", "time": 67}
     assert result == {"result": "sentinel"}

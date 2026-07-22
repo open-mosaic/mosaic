@@ -32,6 +32,9 @@ class MosaicClient:
             "step": step,
         })
 
+    def query_instant(self, query: str, time=None) -> dict:
+        return self._get("/api/v1/query", {"query": query, "time": time})
+
     def _get(self, path: str, params: dict | None = None) -> dict:
         url = f"{self.base_url}{path}"
         try:
