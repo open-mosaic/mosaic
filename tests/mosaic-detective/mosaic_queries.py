@@ -7,7 +7,7 @@ from __future__ import annotations
 import os
 
 import requests
-
+import time
 from dataclasses import dataclass
 
 
@@ -71,6 +71,27 @@ class MosaicClient:
     
     def list_metric_names(self) -> list:
         return self._get("/api/v1/label/__name__/values")
+
+
+    def rank_topology(self, minutes: int = 30) -> dict:
+        end = time.time()
+        start = end - minutes * 60
+        series = parse_range(
+            self.query_range("mosaic_gpu_rank_mapping", start=start, end=end, step="60s"))
+        topology = {}
+        latest = {}
+        for s in series:
+            rank = s.labels.get("rank")
+            if rank is None or not s.values:
+                continue
+            ts = s.values[-1][0]
+            if rank not in latest or ts > latest[rank]:
+                latest[rank] = ts
+                topology[rank] = {
+                    "hostname": s.labels.get("hostname", "?"),
+                    "gpu_uuid": s.labels.get("gpu_uuid", "?"),
+                }
+        return topology
 
 
 def parse_range(data):
