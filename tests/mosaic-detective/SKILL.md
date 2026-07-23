@@ -1,6 +1,6 @@
 ---
 name: mosaic-detective
-description: Diagnose faults in an OpenMosaic GPU cluster from Prometheus metrics. Use when asked what happened to a cluster, why collectives slowed down, why GPU metrics stopped, what caused a throughput drop, or to investigate a suspected NCCL, GPU, network, or telemetry fault at a given time.
+description: Diagnose faults in an OpenMosaic GPU cluster from Prometheus metrics. Use when asked what happened to a cluster, why collectives slowed down, why GPU metrics stopped, what caused a throughput drop, to investigate a suspected NCCL, GPU, network, or telemetry fault at a given time, or when the user says "Kowalski, analysis!".
 ---
 
 # Mosaic Detective
@@ -45,3 +45,21 @@ NCCL metrics carry `rank` and `hostname` directly.
 DCGM metrics carry `UUID`, `host`, `gpu` but **no `rank`**. `compare_ranks.py`
 joins them to ranks via `mosaic_gpu_rank_mapping`, which requires a running
 workload. Use `host` (lowercase), not `Hostname` — the latter is a container ID.
+
+
+## Window strategy
+
+Faults are usually recent. Start narrow and widen only if you find nothing.
+
+1. Start with `--minutes 5`. This catches an active fault cleanly, without
+   averaging it against healthy data from before it started.
+2. If nothing looks wrong, widen to `--minutes 30`, then `--minutes 120`.
+3. Once you have found something, use `--transitions` to pin down exactly
+   when it started:
+   `python scripts/metric_timeline.py <metric> --minutes 60 --transitions`
+
+**Why narrow first:** a ratio computed over a window that spans both healthy
+and faulty periods is diluted. A GPU clamped to 26% of peers reads as 0.86
+over a 10-minute window that is mostly pre-fault, but 0.26 over a 3-minute
+window that is entirely post-fault. If a ratio looks mildly off rather than
+clearly wrong, narrow the window and re-check before concluding.
