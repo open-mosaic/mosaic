@@ -4,17 +4,18 @@
 #   cp config.mk.example config.mk
 # config.mk is gitignored, so your site values never get committed.
 #
-# IMPORTANT: edit values in place — do NOT paste a second copy below the
-# originals. Make uses the LAST assignment, so a leftover placeholder line
-# further down will silently override your value. (The harness guards against
-# the known placeholders, but duplicates of real values can still bite.)
+# IMPORTANT: edit values in place — do not paste a second copy below the
+# originals.
 #
 # The values below are a worked example: a 2-node cluster (2 GPUs/node) on a
 # 1 GbE TCP interconnect, running nccl-tests. Yours will differ.
+#
+# This file is the reference for every variable the harness reads. Work through
+# it top to bottom and you have a working config.
 
-# ── Cluster topology ─────────────────────────────────────────────────────────
+# Topology
 # Tip: if your OpenMosaic deployment already lists nodes in
-# deployments/file_sd_configs/, that's your NODES list.
+# deployments/file_sd_configs/, that's your nodes list.
 #
 # NOTE: IFACE is a single value applied to every node — the current
 # implementation assumes all nodes share the same interconnect interface name.
@@ -23,23 +24,23 @@
 # NOTE: RANK_HOSTS / RANK_GPUS are filled in by hand for now. They could be
 # auto-detected (e.g. from the launcher's rank assignment) in a future
 # improvement.
-NODES      := node-a node-b
+NODES      := node-a node-b                          # every node, space-separated
 IFACE      := eth0                                   # interconnect NIC (same on all nodes)
 RANK_HOSTS := 0:node-a 1:node-a 2:node-b 3:node-b    # rank -> node
 RANK_GPUS  := 0:0 1:1 2:0 3:1                         # rank -> local GPU index
 
-# ── Observability ────────────────────────────────────────────────────────────
-PROM           := http://localhost:9090         # Prometheus (usually on the head node)
+# Observability
+PROM           := http://localhost:9090          # Prometheus base URL (usually the head node)
 COLLECTOR_HOST := node-a                         # node running the OTel collector
 COLLECTOR_CT   := otel-lgtm                       # its container name (docker ps)
 COLLECTOR_PROC := otelcol-contrib                 # its process name (pgrep -x, from host)
 
-# ── Workload (reference launcher: nccl-tests over TCP) ───────────────────────
+#  Workload 
 # The harness only needs WORKLOAD_PROC to detect the job. WORKLOAD_CMD is run by
 # `make workload`; replace it wholesale for a different workload/transport.
 # WORKLOAD_CMD must be a single shell command with NO single quotes.
-WORKLOAD_PROC     := all_reduce_perf
-WORKLOAD_LAUNCHER := mpirun
+WORKLOAD_PROC     := all_reduce_perf     # process name the harness greps to detect the job
+WORKLOAD_LAUNCHER := mpirun              # launcher process, killed by make kill-workload
 
 MPI  := /opt/openmpi
 NN   := /home/user/nccl-tests            # dir holding the benchmark + plugins
@@ -54,7 +55,7 @@ WORKLOAD_CMD := cd $(NN) && $(MPI)/bin/mpirun -np 4 -H node-a:2,node-b:2 \
   -x NCCL_SOCKET_IFNAME=$(IFACE) \
   $(NN)/all_reduce_perf -b 8M -e 8M -f 2 -g 1 -n 200000 -c 0
 
-# ── Optional overrides (sensible defaults in the Makefile) ───────────────────
-# CLK     := 800                        # T2.2 default clamp (MHz)
+# Optional overrides
+# CLK     := 800                        # fault 1 default clock clamp (MHz)
 # DEADMAN := 300                        # auto-restore window (s); 0 disables
 # PIDFILE := /tmp/mosaic-fault-timers.pgids   # where armed timers are recorded

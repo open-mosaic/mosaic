@@ -97,3 +97,7 @@ ms
 sudo
 uplink
 vs
+segfault
+oom
+mhz
+uncorrectable

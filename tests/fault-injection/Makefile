@@ -2,22 +2,20 @@
 # SPDX-License-Identifier: Apache-2.0
 # Fault-injection harness for the OpenMosaic profiler stack.
 #
-# Deliberately breaks a running multi-GPU collective workload in reproducible
-# ways so the metric signature of each failure can be recorded and compared.
-# Advances issue #31 (failure paths beyond happy-path testing); usable as an
+# Breaks a running multi-GPU collective workload in reproducible ways so each
+# failure's metric signature can be recorded. Advances issue #31; usable as an
 # integration-test fixture.
 #
-# ── SETUP ──────────────────────────────────────────────────────────────────
+#  SETUP
 #   1. cp config.mk.example config.mk   and edit it for your cluster
 #   2. run `make` ON THE HEAD NODE (the node you launch the workload from)
 #   3. see README.md for prerequisites (SSH, sudo, docker)
 #
-# All site-specific values come from config.mk. This file contains no
-# hostnames, interfaces, or paths — do not hardcode them here.
+# Every site-specific value lives in config.mk. Hardcode nothing here.
 
 -include config.mk
 
-# ── Defaults (override in config.mk, NOT here) ───────────────────────────────
+# Defaults (override in config.mk, NOT here)
 # Cluster topology
 NODES      ?= node-a node-b
 IFACE      ?= eth0
@@ -32,16 +30,16 @@ COLLECTOR_CT   ?= otel-lgtm
 COLLECTOR_PROC ?= otelcol-contrib
 THROUGHPUT_METRIC ?= nccl_profiler_collective_bytes_total
 
-# Workload (reference launcher — see config.mk.example). The harness only needs
-# WORKLOAD_PROC to detect it; WORKLOAD_CMD/LAUNCHER are for `make workload`.
+# Workload (reference launcher, see config.mk.example). Only WORKLOAD_PROC is
+# needed to detect the job; WORKLOAD_CMD/LAUNCHER are for `make workload`.
 WORKLOAD_CMD      ?=
 WORKLOAD_PROC     ?= all_reduce_perf
 WORKLOAD_LAUNCHER ?= mpirun
 LOG               ?= workload-$(shell date -u +%Y%m%dT%H%M%SZ).log
 
-# Fault parameters (all overridable on the command line).
-# NODE default: first non-collector node. CLK: T2.2 clamp (MHz). MS: T2.3 delay.
-# PCT: T2.3 loss. DEADMAN: auto-restore window (s), 0 disables. INTERVAL: watch period.
+# Fault parameters (all overridable on the command line). NODE defaults to the
+# first non-collector node. CLK: clamp (MHz). MS: delay. PCT: loss.
+# DEADMAN: auto-restore window (s), 0 disables. INTERVAL: watch period.
 NODE     ?= $(word 1,$(filter-out $(COLLECTOR_HOST),$(NODES)))
 CLK      ?= 800
 MS       ?= 20
@@ -53,27 +51,23 @@ INTERVAL ?= 10
 SSH      ?= ssh -t -o LogLevel=ERROR
 SSH_Q    ?= ssh -o BatchMode=yes -o LogLevel=ERROR
 
-# ── Internals ────────────────────────────────────────────────────────────────
+# Internals
 rank_host = $(word 2,$(subst :, ,$(filter $(1):%,$(RANK_HOSTS))))
 rank_gpu  = $(word 2,$(subst :, ,$(filter $(1):%,$(RANK_GPUS))))
 
-# Where each node records the process-group IDs of its armed auto-restore
-# timers. restore kills exactly these groups — never a pattern match — so it
-# can only ever cancel timers THIS harness armed. Override in config.mk if /tmp
-# is unsuitable.
+# Where each node records the PGIDs of its armed timers. restore kills exactly
+# these groups, never a pattern match, so it can only cancel timers this harness
+# armed.
 PIDFILE  ?= /tmp/mosaic-fault-timers.pgids
 
-# arm_deadman: shell snippet (for use inside a root `sh -c`) that launches
-# `sleep DEADMAN; <restore-cmd>` detached in its own session and records its
-# PGID to PIDFILE. $$! is the setsid leader; its child sleep shares the PGID,
-# so killing the group later cleans up both. Usage: $(call arm_deadman,<cmd>)
+# arm_deadman: runs `sleep DEADMAN; <cmd>` detached and records its PGID so
+# restore can kill the group later. Usage: $(call arm_deadman,<cmd>)
 arm_deadman = setsid sh -c "sleep $(DEADMAN); $(1)" >/dev/null 2>&1 & echo \$$! >> $(PIDFILE)
 
-.DEFAULT_GOAL := help   # a bare `make` must never launch anything
+.DEFAULT_GOAL := help   
 
-# Guard: refuse to run against an unconfigured or placeholder config.mk. Injects
-# and workload depend on this so a missing/half-edited config fails loudly with
-# a clear message instead of silently targeting placeholder hosts.
+# Refuse to run against a missing or placeholder config.mk, so a half-edited
+# config fails loudly instead of silently targeting placeholder hosts.
 _check-config:
 	@if [ ! -f config.mk ]; then \
 	  echo "ERROR: config.mk not found. Run: cp config.mk.example config.mk  then edit it."; \
@@ -105,11 +99,11 @@ help:
 	@echo "  make kill-workload                  stop it everywhere"
 	@echo "  make watch                          live per-rank throughput"
 	@echo
-	@echo "  make inject-slow-gpu RANK=n [CLK=mhz]   T2.2  clamp one GPU clock"
-	@echo "  make inject-netem-loss PCT=p            T2.3  packet loss on NODE"
-	@echo "  make inject-netem-delay MS=n            T2.3  added latency on NODE"
-	@echo "  make inject-kill-rank RANK=n            T2.4  kill one rank (aborts job)"
-	@echo "  make inject-kill-collector              T2.5  kill the OTel collector"
+	@echo "  make inject-slow-gpu RANK=n [CLK=mhz]   fault 1  clamp one GPU clock"
+	@echo "  make inject-netem-loss PCT=p            fault 2  packet loss on NODE"
+	@echo "  make inject-netem-delay MS=n            fault 2  added latency on NODE"
+	@echo "  make inject-kill-rank RANK=n            fault 3  kill one rank (aborts job)"
+	@echo "  make inject-kill-collector              fault 4  kill the OTel collector"
 	@echo "  make restore                            clear every fault on every node"
 	@echo
 	@echo "  DEADMAN=<s>   auto-restore window (default $(DEADMAN)s); DEADMAN=0 disables"
@@ -127,18 +121,18 @@ status:
 	  printf '  %-10s %s\n' "$$n" "$$($(SSH_Q) $$n tc qdisc show dev $(IFACE) | head -1)"; done
 	@echo "== armed deadmen (auto-restore timers)"
 	@for n in $(NODES); do \
-	  s=$$($(SSH_Q) $$n 'if [ -s $(PIDFILE) ]; then echo "may be pending — run make restore to clear"; else echo none; fi'); \
+	  s=$$($(SSH_Q) $$n 'if [ -s $(PIDFILE) ]; then echo "may be pending, run make restore to clear"; else echo none; fi'); \
 	  printf '  %-10s %s\n' "$$n" "$$s"; done
 
-# Reference workload launcher. Runs WORKLOAD_CMD (set in config.mk) detached.
-# Replace WORKLOAD_CMD, or this whole target, for your own workload/transport.
+# Runs WORKLOAD_CMD (from config.mk) detached. Replace it, or this target, for
+# your own workload.
 #
-# Run the workload as ONE long-lived process, not a restart loop: a loop builds
-# a fresh communicator each iteration, resetting the profiler's two-window
-# stabilization so nothing is ever exported.
+# Must be one long-lived process, not a restart loop: a loop rebuilds the
+# communicator each iteration and resets the profiler's two-window
+# stabilization, so nothing exports.
 #
-# Refuses to start a second concurrent job — two jobs share the link and emit
-# series with identical hostname+rank labels that silently interleave.
+# Refuses a second concurrent job: two jobs emit series with identical
+# hostname+rank labels that silently interleave.
 workload: _check-config
 	@if [ -z "$(strip $(WORKLOAD_CMD))" ]; then \
 	  echo "ERROR: WORKLOAD_CMD is empty. Set it in config.mk (see config.mk.example)."; exit 1; fi
@@ -158,8 +152,8 @@ kill-workload:
 	@for n in $(NODES); do \
 	  printf '  %-10s %s rank(s) remaining\n' "$$n" "$$($(SSH_Q) $$n 'pgrep -xc $(WORKLOAD_PROC) || true')"; done
 
-# Live per-rank throughput. Ctrl-C to stop. A single reading cannot tell a ramp
-# from a fault; a trend can.
+# Live per-rank throughput. A single reading can't tell a ramp from a fault; a
+# trend can.
 watch:
 	@echo "== watch (Ctrl-C to stop). Compare against your own steady-state baseline."
 	@while true; do \
@@ -171,20 +165,16 @@ watch:
 	  sleep $(INTERVAL); \
 	done
 
-# ── T2.3  network latency / loss ─────────────────────────────────────────────
-# Two named targets: inject-netem-delay MS=n and inject-netem-loss PCT=p. Both
-# share the internal _netem injector below (deadman/sudo/tc logic exists once).
-# For a raw expression (e.g. "delay 50ms limit 5000" to raise the queue), call:
-#   make _netem NETEM="delay 50ms limit 5000"
+# fault 2  network latency / loss
+# inject-netem-delay MS=n and inject-netem-loss PCT=p share the _netem injector
+# below. For a raw expression: make _netem NETEM="delay 50ms limit 5000"
 #
-# The deadman is armed BEFORE the fault in the same root shell, so one sudo
-# covers both. You reach NODE over the interface you are degrading.
+# The deadman is armed before the fault in the same root shell, so one sudo
+# covers both. Note you reach NODE over the interface you are degrading.
 #
-# NOTE netem's default queue is `limit 1000` packets. If the bandwidth-delay
-# product exceeds that (e.g. tens of ms on a fast link), the queue overflows and
-# a `delay` fault silently becomes heavy packet LOSS. On a bandwidth-bound
-# workload, delay may do little until it crosses that cliff and kills the job.
-# Find the usable range by bisection on your cluster.
+# NOTE netem's default queue is `limit 1000` packets. Exceed the bandwidth-delay
+# product and the queue overflows, turning a `delay` into heavy loss. Find the
+# usable range by bisection.
 _netem: _check-config
 	@if [ -z "$(NETEM)" ]; then echo "ERROR: use make inject-netem-loss PCT=p or inject-netem-delay MS=n"; exit 1; fi
 	@echo "== inject netem [$(NETEM)] on $(NODE)  $$(date -u +%FT%TZ)"
@@ -202,17 +192,15 @@ inject-netem-delay: _netem
 inject-netem-loss: NETEM = loss $(PCT)%
 inject-netem-loss: _netem
 
-# ── T2.5  kill the OTel collector ────────────────────────────────────────────
-# pkill -x (exact name), NOT pkill -f: a workload launched with an env var like
-# NCCL_PROFILER_PLUGIN=otel has "otel" in its command line, so `pkill -f otel`
-# would kill the workload too.
+# fault 4  kill the OTel collector
+# pkill -x (exact name), NOT pkill -f: a workload launched with
+# NCCL_PROFILER_PLUGIN=otel has "otel" in its command line.
 #
-# Kills only the collector process, leaving Prometheus/Grafana (same container)
-# alive, so the fault is observable while it happens. Restarting the whole
-# container would take the observability stack down with it.
+# Kills only the collector, leaving Prometheus/Grafana (same container) alive,
+# so the fault is observable while it happens.
 #
-# Signature: profiler series stop; up{job="<collector>"} -> 0; other exporters
-# stay 1; the workload keeps running. Metrics gap != cluster failure.
+# Signature: profiler series stop, up{job="<collector>"} -> 0, other exporters
+# stay 1, workload keeps running. A metrics gap is not a cluster failure.
 inject-kill-collector: _check-config
 	@echo "== inject kill-collector [$(COLLECTOR_PROC)] on $(COLLECTOR_HOST)  $$(date -u +%FT%TZ)"
 	@if [ "$(DEADMAN)" = "0" ]; then \
@@ -226,17 +214,14 @@ inject-kill-collector: _check-config
 	@printf '   %s %s process(es) remaining (expect 0)\n' \
 	  "$$($(SSH_Q) $(COLLECTOR_HOST) 'pgrep -xc $(COLLECTOR_PROC) || true')" "$(COLLECTOR_PROC)"
 
-# ── T2.4  kill one rank ──────────────────────────────────────────────────────
-# Resolves rank -> gpu index -> gpu UUID -> compute PID -> kill -9, so it hits
-# exactly the target rank. Matching the workload binary name with pgrep -f would
-# also match the launcher (mpirun), killing the whole job the wrong way.
+# fault 3  kill one rank
+# Resolves rank -> gpu -> uuid -> compute PID so it hits exactly that rank;
+# pgrep -f on the binary would also match the launcher and kill the whole job.
 #
-# DESTRUCTIVE: NCCL has no fault tolerance, so one dead rank aborts the job. All
-# collectives flatline at once. NOT self-healing — recover with `make workload`.
-# No deadman (nothing to auto-restore).
+# NCCL has no fault tolerance, so one dead rank aborts everything.
+# Not self-healing, recover with `make workload`. No deadman (nothing to undo).
 #
-# Signature vs T2.5: here the collector stays up (up=1) and all GPUs go idle
-# (job dead). T2.5 is the inverse.
+# Inverse of fault 4: here the collector stays up and all GPUs go idle.
 inject-kill-rank: _check-config
 	@if [ -z "$(RANK)" ]; then echo "ERROR: RANK required, e.g. make inject-kill-rank RANK=3"; exit 1; fi
 	$(eval H := $(call rank_host,$(RANK)))
@@ -249,15 +234,13 @@ inject-kill-rank: _check-config
 	  echo "  killing pid $$P on $(H)"; kill -9 $$P'
 	@echo "  job aborted. recover with: make workload"
 
-# ── T2.2  clamp one GPU's clock ──────────────────────────────────────────────
-# Locks one GPU to CLK MHz with `nvidia-smi -lgc`. Deadman runs -rgc to release.
+# fault 1  clamp one GPU's clock 
+# Locks one GPU to CLK MHz with `nvidia-smi -lgc`; the deadman runs -rgc.
 #
-# NOTE this is the ONLY asymmetric fault — it hits one GPU, not all ranks. On a
-# network-bound workload the clamped GPU may still finish its reduce before the
-# link is ready, so collective throughput barely moves and the signature lives
-# ONLY in DCGM (SM_CLOCK / POWER_USAGE of the one GPU), not in the profiler.
-# Clamp too hard and the collective times out and the job aborts — find the
-# range by bisection.
+# The only asymmetric fault: it hits one GPU, not all ranks. On a network-bound
+# workload the clamped GPU still finishes before the link is ready, so
+# throughput barely moves and the signature lives only in DCGM, not the
+# profiler. Clamp too hard and the job aborts; find the range by bisection.
 inject-slow-gpu: _check-config
 	@if [ -z "$(RANK)" ]; then echo "ERROR: RANK required, e.g. make inject-slow-gpu RANK=3"; exit 1; fi
 	$(eval H := $(call rank_host,$(RANK)))
@@ -273,13 +256,12 @@ inject-slow-gpu: _check-config
 	fi
 	@$(SSH_Q) $(H) 'nvidia-smi -i $(G) --query-gpu=clocks.max.sm,clocks.gr --format=csv,noheader' | sed "s/^/   now: /"
 
-# ── restore ──────────────────────────────────────────────────────────────────
-# Idempotent: safe when nothing is injected, safe to run twice. Clears netem and
-# resets ALL GPU clocks on every node, then restarts the collector if it is dead.
+# Restore 
+# Idempotent: safe when nothing is injected, safe to run twice. Clears netem,
+# resets all GPU clocks, cancels timers, restarts the collector if dead.
 #
-# stderr is NOT suppressed and ssh output is NOT piped: a pipe swallows sudo's
-# (newline-less) password prompt and you type blind; a hidden failure is worse
-# than the benign "Cannot delete qdisc with handle of zero" noise.
+# ssh output is not piped and stderr is not suppressed: a pipe swallows sudo's
+# password prompt and you type blind.
 restore:
 	@echo "== restore $$(date -u +%FT%TZ)"
 	@for n in $(NODES); do \

@@ -27,6 +27,26 @@ The harness lives in `tests/fault-injection/`:
 
 ---
 
+## Prerequisites
+
+Run the harness **on the head node** (the node you launch the workload from). It
+reaches the other nodes over SSH, so nothing is installed on the workers; they
+only receive commands. You need:
+
+- **SSH key auth** from the head node to every node in `NODES`, including the
+  head node to itself (the harness treats all nodes uniformly).
+- **sudo** on every node for `tc` and `nvidia-smi`. Interactive sudo is enough:
+  you are prompted once, at inject time, and the auto-restore timer inherits
+  that privilege. For unattended/CI use, add NOPASSWD for just those two
+  binaries, e.g. in `/etc/sudoers.d/`:
+  ```
+  <user> ALL=(root) NOPASSWD: /usr/sbin/tc, /usr/bin/nvidia-smi
+  ```
+- **docker access** on the collector host (to bounce the collector container).
+- **`jq`** on the head node (for `make watch`).
+
+---
+
 ## Quick start
 
 ```
@@ -53,13 +73,16 @@ reproducible ways and lets you record how each one looks in Prometheus/Grafana.
 default 300); `inject-kill-rank` has none, since there is nothing to auto-restore
 (recover with `make workload`).
 
-| ID | Fault | Command (example) |
-|---|---|---|
-| T2.2 | clamp one GPU's clock | `make inject-slow-gpu RANK=3 CLK=1500` |
-| T2.3 | packet loss | `make inject-netem-loss PCT=1` |
-| T2.3 | added latency | `make inject-netem-delay MS=20` |
-| T2.4 | kill one rank | `make inject-kill-rank RANK=3` |
-| T2.5 | kill the OTel collector | `make inject-kill-collector` |
+| ID | Fault | Command (example) | Parameters |
+|---|---|---|---|
+| 1 | clamp one GPU's clock | `make inject-slow-gpu RANK=3 CLK=1500` | `RANK` which rank's GPU; `CLK` clock ceiling in MHz |
+| 2 | packet loss | `make inject-netem-loss PCT=1` | `PCT` percentage of packets dropped |
+| 2 | added latency | `make inject-netem-delay MS=20` | `MS` delay added per packet, in ms |
+| 3 | kill one rank | `make inject-kill-rank RANK=3` | `RANK` which rank to kill |
+| 4 | kill the OTel collector | `make inject-kill-collector` | none |
+
+All injects also accept `DEADMAN=<s>` (auto-restore window; `0` disables) and
+`NODE=<host>` where the target is a node rather than a rank.
 
 For an arbitrary netem expression, call the shared injector directly:
 `make _netem NETEM="delay 50ms limit 5000"`.
@@ -80,29 +103,7 @@ cluster, from this document alone.
 
 ---
 
-## 2. Prerequisites
-
-Run the harness **on the head node** (the node you launch the workload from). It
-reaches the other nodes over SSH, so nothing is installed on the workers; they
-only receive commands. You need:
-
-- **SSH key auth** from the head node to every node in `NODES`, including the
-  head node to itself (the harness treats all nodes uniformly).
-- **sudo** on every node for `tc` and `nvidia-smi`. Interactive sudo is enough:
-  you are prompted once, at inject time, and the auto-restore timer inherits
-  that privilege. For unattended/CI use, add NOPASSWD for just those two
-  binaries, e.g. in `/etc/sudoers.d/`:
-  ```
-  <user> ALL=(root) NOPASSWD: /usr/sbin/tc, /usr/bin/nvidia-smi
-  ```
-- **docker access** on the collector host (to bounce the collector container).
-- **`jq`** on the head node (for `make watch`).
-- A **Prometheus + OTel-collector** deployment scraping the workload's profiler
-  metrics and the node/GPU exporters.
-
----
-
-## 3. Setup
+## 2. Setup
 
 ```
 cp config.mk.example config.mk     # then edit config.mk for your cluster
@@ -112,17 +113,9 @@ make status                        # ranks / qdisc / armed timers, per node
 
 `config.mk` holds every site-specific value and is gitignored, so your topology
 and paths never get committed. The `Makefile` itself contains no hostnames,
-interfaces, or paths. Fill in, at minimum:
-
-| Variable | Meaning |
-|---|---|
-| `NODES` | all nodes, space-separated |
-| `IFACE` | the interconnect NIC on each node |
-| `RANK_HOSTS` | `rank:node` map (which rank runs where) |
-| `RANK_GPUS` | `rank:gpu-index` map (which local GPU each rank uses) |
-| `COLLECTOR_HOST` / `COLLECTOR_CT` / `COLLECTOR_PROC` | collector node, container, process name |
-| `PROM` | Prometheus base URL |
-| `WORKLOAD_CMD` | how to launch your workload (see below) |
+interfaces, or paths. Every variable is documented inline in
+`config.mk.example`; work through that file top to bottom and you have a
+working config.
 
 ### The workload
 
@@ -154,7 +147,7 @@ make inject-netem-loss PCT=1 DEADMAN=0    # no timer; persists until `make resto
 
 ---
 
-## 4. Reading the metrics
+## 3. Reading the metrics
 
 ### Cross-check derived metrics against an independent source
 
@@ -173,10 +166,6 @@ R2=$(cat /sys/class/net/<iface>/statistics/tx_bytes)
 echo "$(( (R2-R1)/10/1000000 )) MB/s on the wire"
 ```
 
-One deployment note: node-exporter run without host networking reports only the
-container's interfaces, not the host NIC, so `node_network_*` may not see your
-interconnect at all.
-
 ### Rate queries alias: measure against a same-run baseline
 
 `rate(<counter>[1m])` catches a whole number of scrape increments per window, so
@@ -189,7 +178,7 @@ run.
 
 Which faults actually bite depends on what your workload is bound by:
 
-| Bound by | `delay`/`loss` (T2.3) | GPU clamp (T2.2) |
+| Bound by | `delay`/`loss` (Fault 2) | GPU clamp (Fault 1) |
 |---|---|---|
 | **network** (e.g. 1 GbE, large messages) | strong, this is the bottleneck | weak, GPU has slack, profiler shows nothing |
 | **compute** | weaker | strong, throughput drops |
@@ -200,9 +189,21 @@ cluster.
 
 ---
 
-## 5. Faults
+## 4. Faults
 
-### T2.2: GPU clock clamp
+Each injected fault stands in for a class of real failure. The injection method
+is artificial, but the metric signature it produces is the one you would see
+from the real thing:
+
+| Fault | Emulates |
+|---|---|
+| 1, GPU clock clamp | a GPU running below spec: thermal throttling from a failed fan or blocked airflow, a power cap, or a degrading VRM |
+| 2, netem loss / delay | a degraded link: a failing NIC or cable, a congested or misconfigured switch port, or a noisy shared uplink |
+| 3, kill a rank | a training process dying: OOM kill, a segfault, an uncorrectable GPU error, or a node dropping out |
+| 4, kill the collector | an observability outage where the cluster is healthy but you have gone blind: collector crash, OOM, or a bad config rollout |
+
+
+### Fault 1: GPU clock clamp
 
 ```
 make inject-slow-gpu RANK=3 CLK=1500
@@ -220,23 +221,23 @@ profiler-based signatures some designs predict (`rank_latency` / `collective_tim
 divergence) may not appear; verify against DCGM.
 
 **Near-binary: bisect `CLK`.** Clamp too hard and the collective times out and
-the job aborts (looking like T2.4); too soft and nothing changes. For
+the job aborts (looking like Fault 3); too soft and nothing changes. For
 *reproducing* a controlled slowdown, find the value that throttles one GPU
 without killing the job by bisection.
 
 *Screenshot, DCGM GPU Power (or SM_CLOCK): the clamped GPU drops while the others stay flat.*
 
-![T2.2 GPU power](images/fault-playbook/2.2-gpu-power-clamp.png)
+![Fault 1 GPU power](images/fault-playbook/2.2-gpu-power-clamp.png)
 
 *Screenshot, throughput: flat throughout (on a network-bound cluster). The profiler showing nothing is the point.*
 
-![T2.2 throughput unaffected](images/fault-playbook/2.2-throughput-unaffected.png)
+![Fault 1 throughput unaffected](images/fault-playbook/2.2-throughput-unaffected.png)
 
 **Recovery:** timer runs `nvidia-smi -rgc`; or `make restore`.
 
 ---
 
-### T2.3: Network latency / loss
+### Fault 2: Network latency / loss
 
 ```
 make inject-netem-loss  PCT=1       # packet loss
@@ -276,11 +277,11 @@ slowest link; that much is topology-independent. Whether you can then
 
 *Screenshot, throughput under the fault: clear degradation, all ranks together, recovering after restore. (Use a full-scale panel so the drop is visible, not a zoomed one.)*
 
-![T2.3 loss](images/fault-playbook/2.3-loss-0.1-throughput.png)
+![Fault 2 loss](images/fault-playbook/2.3-loss-0.1-throughput.png)
 
-*Screenshot, past the cliff: a larger loss flatlines the job, indistinguishable from a dead job (contrast T2.4).*
+*Screenshot, past the cliff: a larger loss flatlines the job, indistinguishable from a dead job (contrast Fault 3).*
 
-![T2.3 heavy loss](images/fault-playbook/2.3-loss-3-flatline.png)
+![Fault 2 heavy loss](images/fault-playbook/2.3-loss-3-flatline.png)
 
 **Recovery:** timer runs `tc qdisc del`; or `make restore`. **restore ≠
 recovery**: after a heavy fault the job may take minutes to resume, or need a
@@ -288,7 +289,7 @@ restart.
 
 ---
 
-### T2.4: Kill a rank
+### Fault 3: Kill a rank
 
 ```
 make inject-kill-rank RANK=3
@@ -309,24 +310,24 @@ instant; no single panel is load-bearing:
 
 *GPU power, all GPUs drop to idle*
 
-![T2.4 GPU power all drop](images/fault-playbook/2.4-gpu-power-all-drop.png)
+![Fault 3 GPU power all drop](images/fault-playbook/2.4-gpu-power-all-drop.png)
 
 
 *host CPU drops on every node*
 
-![T2.4 CPU drop](images/fault-playbook/2.4-cpu-drop.png)
+![Fault 3 CPU drop](images/fault-playbook/2.4-cpu-drop.png)
 
 
 *collective metrics stop when the job dies*
 
-![T2.4 metrics gap](images/fault-playbook/2.4-metrics-gap.png)
+![Fault 3 metrics gap](images/fault-playbook/2.4-metrics-gap.png)
 
 
 **Recovery:** not self-healing; `make workload`.
 
 ---
 
-### T2.5: Kill the OTel collector
+### Fault 4: Kill the OTel collector
 
 ```
 make inject-kill-collector
@@ -342,24 +343,24 @@ observable while it happens.
 cluster is fine: `up{job="<collector>"}` → 0 while every other exporter stays 1,
 the wire stays at line rate, and GPU power stays at its working level.
 
-**This is the inverse of T2.4**, the distinction a diagnostic must learn:
+**This is the inverse of Fault 3**, the distinction a diagnostic must learn:
 
 | | metrics | `up{collector}` | GPU power |
 |---|---|---|---|
-| **T2.4** kill-rank | flatline | **1** (collector fine) | **idle** (job dead) |
-| **T2.5** kill-collector | flatline | **0** (collector dead) | **working** (job alive) |
+| **3** kill-rank | flatline | **1** (collector fine) | **idle** (job dead) |
+| **4** kill-collector | flatline | **0** (collector dead) | **working** (job alive) |
 
 Same "metrics stopped" symptom; opposite everything else. GPU power alone
 separates them.
 
 *throughput series stop at the kill (the gap is the fault)*
 
-![T2.5 metrics gap](images/fault-playbook/2.5-metrics-gap.png)
+![Fault 4 metrics gap](images/fault-playbook/2.5-metrics-gap.png)
 
 
 *GPU power flat across the gap (cluster alive)*
 
-![T2.5 GPU power flat](images/fault-playbook/2.5-gpu-power-flat.png)
+![Fault 4 GPU power flat](images/fault-playbook/2.5-gpu-power-flat.png)
 
 
 **Recovery:** timer runs `docker restart <collector-ct>`; or `make restore`.
@@ -369,21 +370,21 @@ compose down` destroys all collected metrics.**
 
 ---
 
-## 6. Telling the faults apart
+## 5. Telling the faults apart
 
 | Fault | Throughput | Ranks | GPU (DCGM) | `up{collector}` | Job survives? |
 |---|---|---|---|---|---|
-| T2.2 slow-gpu | usually unchanged | **one** GPU | one GPU clock/power **low** | 1 | yes |
-| T2.3 netem | down (or 0) | all together | normal | 1 | depends on severity |
-| T2.4 kill-rank | flatline | all together | **all** idle | 1 | no |
-| T2.5 kill-collector | flatline | n/a | working | **0** | yes |
+| 1 slow-gpu | usually unchanged | **one** GPU | one GPU clock/power **low** | 1 | yes |
+| 2 netem | down (or 0) | all together | normal | 1 | depends on severity |
+| 3 kill-rank | flatline | all together | **all** idle | 1 | no |
+| 4 kill-collector | flatline | n/a | working | **0** | yes |
 
 Decision order for a "collectives stopped" event:
 
-1. `up{job="<collector>"}` = 0 → **T2.5** (collector died; cluster is fine).
-2. Else all GPUs idle → **T2.4** (job died).
-3. Else throughput down, GPUs busy, ranks uniform → **T2.3** (network).
-4. Else one GPU's clock/power low while throughput holds → **T2.2**.
+1. `up{job="<collector>"}` = 0 → **Fault 4** (collector died; cluster is fine).
+2. Else all GPUs idle → **Fault 3** (job died).
+3. Else throughput down, GPUs busy, ranks uniform → **Fault 2** (network).
+4. Else one GPU's clock/power low while throughput holds → **Fault 1**.
 
 This tree is a deterministic *baseline*, not a ceiling: it reads an instantaneous
 snapshot, so it can't separate a throttle-induced abort from a kill-rank (see
@@ -394,7 +395,7 @@ work, should distinguish cases this rule collapses.
 ### Throttle-death vs rank-death (postmortem)
 
 A throttle severe enough to abort the job produces the same *live* symptom as
-T2.4 (kill-rank): every collective flatlines, all GPUs idle. Three signals should
+Fault 3 (kill-rank): every collective flatlines, all GPUs idle. Three signals should
 still separate them after the fact (expected, not yet verified here):
 
 1. **The lead-up.** A throttle degrades before it kills: for seconds to minutes
@@ -417,7 +418,7 @@ still separate them after the fact (expected, not yet verified here):
 
 ---
 
-## 7. Gotchas
+## 6. Gotchas
 
 - **`pkill -f <collector>` can kill the workload** if the workload's command line
   contains the collector's name. Use `pkill -x`.
