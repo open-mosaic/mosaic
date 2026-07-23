@@ -6,60 +6,85 @@ description: Diagnose faults in an OpenMosaic GPU cluster from Prometheus metric
 # Mosaic Detective
 
 Diagnose faults in a multi-GPU OpenMosaic cluster by querying its Prometheus
-metrics. Never write raw PromQL — use the scripts below.
+metrics.
 
 ## Setup
 
-All scripts need the Prometheus host. Set it once:
-cat > metrics-reference.md << 'EOF'
-# Metrics reference
+`PROMETHEUS_HOST` and `PROMETHEUS_PORT` are already exported in the
+environment. Do not check them. Run all scripts from this directory.
 
-## Trusted
+## Available scripts
 
-| metric | type | stat | notes |
-|---|---|---|---|
-| `nccl_profiler_collective_bytes_total` | counter | delta | bytes moved per rank; has `rank` and `hostname` labels |
-| `nccl_profiler_collective_time_microseconds_sum` | counter | delta | cumulative collective time |
-| `nccl_profiler_rank_bytes_total` | counter | delta | per-rank bytes |
-| `DCGM_FI_DEV_SM_CLOCK` | gauge | mean | per-GPU clock; the only reliable clock-clamp localiser |
-| `DCGM_FI_DEV_POWER_USAGE` | gauge | mean | per-GPU power draw |
-| `up` | gauge | — | scrape target liveness, via check_collector_health |
-| `mosaic_gpu_rank_mapping` | info | — | rank → hostname/gpu_uuid; only exports during a workload |
+- `scripts/check_collector_health.py` — which scrape targets are up or down
+- `scripts/metric_timeline.py <metric> [--minutes N] [--transitions]` — how a
+  metric moved, and when it changed
+- `scripts/compare_ranks.py <metric> [--minutes N] [--stat delta|mean]` —
+  compare a metric across ranks
+- `scripts/list_metrics.py [--filter SUBSTR]` — what metrics exist
 
-## Avoid
+## Diagnostic procedure
 
-`nccl_profiler_rank_rate_MB_per_second_*` — reports physically impossible
-values; TCP `send()` returns at kernel handoff, not on the wire.
+**1. Is the telemetry pipeline alive?**
 
-`node_network_*`, `node_netstat_*` — the node-exporter container reports its
-own virtual `eth0`, not the physical interconnect. Not usable for diagnosing
-interconnect faults.
+    python scripts/check_collector_health.py
 
-`nccl_profiler_rank_latency_microseconds_*`, `*_transfer_latency_*` — may not
-export under fixed-size load.
+If `otel-collector` is DOWN, metrics have stopped arriving. Ignore `vllm-*`
+targets being DOWN — that is the normal idle state.
 
-## Labels
+**2. What is the overall picture?**
 
-NCCL metrics carry `rank` and `hostname` directly.
+    python scripts/metric_timeline.py nccl_profiler_collective_bytes_total --minutes 5
 
-DCGM metrics carry `UUID`, `host`, `gpu` but **no `rank`**. `compare_ranks.py`
-joins them to ranks via `mosaic_gpu_rank_mapping`, which requires a running
-workload. Use `host` (lowercase), not `Hostname` — the latter is a container ID.
+Is throughput normal, reduced, or completely stopped (first == last)?
 
+**3. Is it one rank, or all of them?**
+
+    python scripts/compare_ranks.py nccl_profiler_collective_bytes_total --minutes 5 --stat delta
+    python scripts/compare_ranks.py DCGM_FI_DEV_SM_CLOCK --minutes 5 --stat mean
+
+The first shows whether a rank has stopped. The second shows whether a GPU is
+clock-limited — the ONLY way to localise a clamp, because all-reduce
+synchronises ranks and makes NCCL metrics uniform even when one GPU is slow.
+
+**4. When did it change?**
+
+    python scripts/metric_timeline.py <metric> --minutes 60 --transitions
+
+Prints timestamps where a value changed sharply. Add `--threshold 0.5` if noisy.
+
+**5. If a metric name returns no data**
+
+    python scripts/list_metrics.py --filter nccl
+
+An unrecognised name returns "no data", which is NOT the same as flatlined.
+
+## Do not write raw PromQL or inline Python
+
+Every question you need is covered by these scripts. If something seems
+unanswerable with them, say so rather than improvising — an improvised query
+with a wrong label returns empty, which reads as "flatlined" and produces a
+wrong diagnosis.
 
 ## Window strategy
 
-Faults are usually recent. Start narrow and widen only if you find nothing.
+Faults are usually recent. Start narrow, widen only if you find nothing:
+`--minutes 5`, then 30, then 120.
 
-1. Start with `--minutes 5`. This catches an active fault cleanly, without
-   averaging it against healthy data from before it started.
-2. If nothing looks wrong, widen to `--minutes 30`, then `--minutes 120`.
-3. Once you have found something, use `--transitions` to pin down exactly
-   when it started:
-   `python scripts/metric_timeline.py <metric> --minutes 60 --transitions`
+A ratio computed over a window spanning both healthy and faulty periods is
+diluted. A GPU clamped to 26% of peers reads 0.86 over a mostly-pre-fault
+10-minute window, but 0.26 over a 3-minute post-fault window. If a ratio looks
+mildly off rather than clearly wrong, narrow the window and re-check.
 
-**Why narrow first:** a ratio computed over a window that spans both healthy
-and faulty periods is diluted. A GPU clamped to 26% of peers reads as 0.86
-over a 10-minute window that is mostly pre-fault, but 0.26 over a 3-minute
-window that is entirely post-fault. If a ratio looks mildly off rather than
-clearly wrong, narrow the window and re-check before concluding.
+Note that Prometheus retains history: widening the window may surface an OLD
+fault that has already been resolved. Check whether the fault is still active
+before reporting it as current.
+
+## Reading the results
+
+See `fault-signatures.md` for each fault's signature and the rules for
+distinguishing them. See `metrics-reference.md` for which metrics to trust.
+
+## Reporting
+
+State the fault type, the evidence, and what you ruled out. If evidence is
+ambiguous, say so rather than guessing.
