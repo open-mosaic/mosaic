@@ -121,3 +121,20 @@ def test_parse_instant_sample():
             value=(1710000000.0, 1.0),
         )
     ]
+
+
+def test_list_metric_names_calls_get_with_correct_path():
+    client = mq.MosaicClient(session=FakeSession(FakeResponse(json_data={})))
+
+    captured = {}
+    def fake_get(path, params=None):
+        captured["path"] = path
+        captured["params"] = params
+        return ["up", "nccl_profiler_collective_bytes_total"]
+    client._get = fake_get
+
+    result = client.list_metric_names()
+
+    assert captured["path"] == "/api/v1/label/__name__/values"
+    assert captured["params"] is None
+    assert result == ["up", "nccl_profiler_collective_bytes_total"]

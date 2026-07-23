@@ -68,6 +68,9 @@ class MosaicClient:
             raise MosaicQueryError(f"Prometheus query failed at {self.base_url}: {payload.get('error')}")
 
         return payload.get("data", {})
+    
+    def list_metric_names(self) -> list:
+        return self._get("/api/v1/label/__name__/values")
 
 
 def parse_range(data):
@@ -89,3 +92,4 @@ def parse_instant(data):
         series_list.append(InstantSample(labels, value))
         
     return series_list
+
