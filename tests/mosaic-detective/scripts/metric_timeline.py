@@ -64,9 +64,9 @@ def main():
         if args.find_anomaly:
             anomalies = find_anomalies(series.values, args.threshold)
             if anomalies:
-                ts, before, after = anomalies[-1]   # most recent
-                when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
-                print(f"    ANOMALY at {when}: rate {before:.2f}/s -> {after:.2f}/s")
+                for ts, before, after in anomalies:
+                    when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
+                    print(f"    ANOMALY at {when}: rate {before:.2f}/s -> {after:.2f}/s")
             else:
                 print("    no rate change detected")
         
@@ -91,7 +91,7 @@ def find_anomalies(values, threshold=0.5):
         rates.append((values[i][0], dv / dt if dt else 0.0))
 
     out = []
-    for i in range(1, len(rates)):
+    for i in range(1, len(rates)-2):
         prev_rate = rates[i - 1][1]
         curr_rate = rates[i][1]
         # A shift is significant if it moves by more than `threshold` of the

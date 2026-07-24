@@ -10,16 +10,20 @@ metrics.
 
 ## Setup
 
-`PROMETHEUS_HOST` and `PROMETHEUS_PORT` are already exported in the
-environment. Do not check them. Run all scripts from this directory.
+`PROMETHEUS_HOST` and `PROMETHEUS_PORT` are already exported. Do not check
+them. Run all scripts from this directory.
 
 ## Available scripts
 
 - `scripts/check_collector_health.py` — which scrape targets are up or down
-- `scripts/metric_timeline.py <metric> [--minutes N] [--transitions] [--find-anomaly]` — how a metric moved, when it changed, and where its rate shifted
-- `scripts/compare_ranks.py <metric> [--minutes N] [--stat delta|mean]` —
-  compare a metric across ranks
+- `scripts/metric_timeline.py <metric> [--minutes N] [--transitions] [--find-anomaly]` — how a metric moved, and when its rate shifted
+- `scripts/compare_ranks.py <metric> [--minutes N] [--stat delta|mean] [--by rank|link]` — compare a metric across ranks, or across source→dest links
 - `scripts/list_metrics.py [--filter SUBSTR]` — what metrics exist
+
+Do not write raw PromQL or inline Python. Every question is covered by these
+scripts. If something seems unanswerable with them, say so rather than
+improvising — a query with a wrong label returns empty, which reads as
+"flatlined" and produces a wrong diagnosis.
 
 ## Diagnostic procedure
 
@@ -27,8 +31,8 @@ environment. Do not check them. Run all scripts from this directory.
 
     python scripts/check_collector_health.py
 
-If `otel-collector` is DOWN, metrics have stopped arriving. Ignore `vllm-*`
-targets being DOWN — that is the normal idle state.
+If `otel-collector` is DOWN, metrics have stopped arriving. `vllm-*` targets
+being DOWN is the normal idle state — ignore them.
 
 **2. What is the overall picture?**
 
@@ -38,8 +42,8 @@ Is throughput normal, reduced, or completely stopped (first == last)?
 
 **3. Is it one rank, or all of them?**
 
-    python scripts/compare_ranks.py nccl_profiler_collective_bytes_total --minutes 5 --stat delta
-    python scripts/compare_ranks.py DCGM_FI_DEV_SM_CLOCK --minutes 5 --stat mean
+    python scripts/compare_ranks.py nccl_profiler_collective_bytes_total --minutes 2 --stat delta
+    python scripts/compare_ranks.py DCGM_FI_DEV_SM_CLOCK --minutes 2 --stat mean
 
 The first shows whether a rank has stopped. The second shows whether a GPU is
 clock-limited — the ONLY way to localise a clamp, because all-reduce
@@ -49,82 +53,47 @@ synchronises ranks and makes NCCL metrics uniform even when one GPU is slow.
 
     python scripts/metric_timeline.py <metric> --minutes 15 --find-anomaly
 
-Keep this window modest (15 minutes is usually right). Prometheus retains
-history, so a wide scan will surface faults that have already been resolved.
-
-Reports the most recent point where each series' *rate of change* shifted.
-This catches both a gauge dropping (a clamped clock) and a counter freezing
-(a dead rank or collector), and it does not require you to guess a window —
-scan wide and it will tell you when things went wrong.
-
-Use `--transitions` instead if you want every change point rather than just
-the most recent.
-
-**5. If a metric name returns no data**
-
-    python scripts/list_metrics.py --filter nccl
-
-An unrecognised name returns "no data", which is NOT the same as flatlined.
-
-## Verify the fault is still active
-
-Before reporting anything, confirm it is happening **now**, not in the past.
-Re-check the metric over the most recent 1–2 minutes:
-
-    python scripts/compare_ranks.py DCGM_FI_DEV_SM_CLOCK --minutes 2 --stat mean
-
-If the values have returned to normal, the fault is historical — say so
-explicitly ("a clock clamp occurred at 09:38 but has since been cleared")
-rather than reporting it as a current problem.
-
-Signs you are looking at a resolved fault: the metric's mean over a window is
-between healthy and faulty values, the series shows a return to normal near
-the end of the window, or the anomaly timestamp is many minutes old.
-
-
-## Do not write raw PromQL or inline Python
-
-Every question you need is covered by these scripts. If something seems
-unanswerable with them, say so rather than improvising — an improvised query
-with a wrong label returns empty, which reads as "flatlined" and produces a
-wrong diagnosis.
-
-## Window strategy
-
-Faults are usually recent. Start narrow, widen only if you find nothing:
-`--minutes 5`, then 30, then 120.
-
-A ratio computed over a window spanning both healthy and faulty periods is
-diluted. A GPU clamped to 26% of peers reads 0.86 over a mostly-pre-fault
-10-minute window, but 0.26 over a 3-minute post-fault window. If a ratio looks
-mildly off rather than clearly wrong, narrow the window and re-check.
-
-If a ratio looks mildly off rather than clearly wrong, narrow the window once
-and re-check. Do not iterate further — one narrowing is enough to tell a real
-divergence from a diluted one.
-
-## Reading the results
-
-See `fault-signatures.md` for each fault's signature and the rules for
-distinguishing them. See `metrics-reference.md` for which metrics to trust.
-
-## Reporting
-
-State the fault type, the evidence, and what you ruled out. If evidence is
-ambiguous, say so rather than guessing.
-
+Reports where each series' rate of change shifted — catches a gauge dropping
+(clamped clock) or a counter freezing (dead rank or collector). Works cleanly
+on `nccl_profiler_collective_bytes_total` and DCGM gauges. Avoid it on
+`nccl_profiler_transfer_time_microseconds_sum` — that metric is too noisy at
+15s resolution and produces spurious results.
 
 ## Be decisive
 
-Reach a diagnosis in as few steps as possible. The four checks above are
-usually sufficient. Once the evidence is unambiguous, stop investigating and
-report — do not re-run the same comparison at multiple window sizes to refine
-a number that is already conclusive, and do not pursue corroborating evidence
-for a finding that is already clear.
+Reach a diagnosis in as few steps as possible; the four checks above are
+usually enough. Once the evidence is unambiguous, stop and report — do not
+re-run a comparison at multiple window sizes to refine a number that is
+already conclusive, and do not chase corroboration for a clear finding. A
+clock ratio of 0.5 against uniform peers is already diagnostic; you need not
+narrow until it reads 0.26. If a check is ambiguous or unhelpful, move on
+rather than retrying it a different way.
 
-A clock ratio of 0.5 against uniform peers is already diagnostic; you do not
-need to narrow the window until it reads 0.26. Report the finding and the
-window you measured it over.
+## Window strategy
 
-If a check returns something ambiguous or unhelpful, move on rather than
-retrying it a different way.
+Faults are usually recent. Start narrow (`--minutes 2`), widen only if you
+find nothing. A ratio over a window spanning both healthy and faulty periods
+is diluted — a GPU clamped to 26% of peers reads 0.86 over a mostly-pre-fault
+10-minute window but 0.26 over a 3-minute post-fault window. If a ratio looks
+mildly off rather than clearly wrong, narrow once and re-check; one narrowing
+is enough.
+
+Prometheus retains history, so a wide `--find-anomaly` scan may surface a
+fault that is already resolved. Before reporting, confirm the fault is active
+**now** by re-checking the most recent 1–2 minutes. If values have returned to
+normal, say so ("a clock clamp occurred at 09:38 but has since cleared")
+rather than reporting it as current. Signs of a resolved fault: a mean sitting
+between healthy and faulty values, a return to normal near the window's end,
+or an anomaly timestamp many minutes old.
+
+## Reading the results
+
+See `fault-signatures.md` for each fault's signature and how to tell them
+apart, and `metrics-reference.md` for which metrics to trust.
+
+## Reporting
+
+State the fault type, the evidence, and what you ruled out. Report in plain
+operational terms ("a rank process died on golf", "the interconnect is
+degraded") — no internal ticket numbers or section references. If evidence is
+ambiguous, say so rather than guessing.

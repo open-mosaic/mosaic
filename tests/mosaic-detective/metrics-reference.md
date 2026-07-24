@@ -7,6 +7,7 @@
 | `nccl_profiler_collective_bytes_total` | counter | delta | bytes moved per rank; has `rank` and `hostname` labels |
 | `nccl_profiler_collective_time_microseconds_sum` | counter | delta | cumulative collective time |
 | `nccl_profiler_rank_bytes_total` | counter | delta | per-rank bytes |
+| `nccl_profiler_transfer_time_microseconds_sum` | counter | delta | per-link (source_rank/dest_rank/channel); clear in Grafana, too noisy for --find-anomaly |
 | `DCGM_FI_DEV_SM_CLOCK` | gauge | mean | per-GPU clock; the only reliable clock-clamp localiser |
 | `DCGM_FI_DEV_POWER_USAGE` | gauge | mean | per-GPU power draw |
 | `up` | gauge | — | scrape target liveness, via check_collector_health |

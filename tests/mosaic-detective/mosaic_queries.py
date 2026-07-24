@@ -93,7 +93,10 @@ class MosaicClient:
                 }
         return topology
 
-
+    def series_for(self, metric: str) -> list:
+        """Label sets present for a metric — reveals which labels it carries."""
+        return self._get("/api/v1/series", {"match[]": metric})
+    
 def parse_range(data):
     series_list = []
     for entry in data.get("result", []):
