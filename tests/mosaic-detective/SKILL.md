@@ -16,8 +16,7 @@ environment. Do not check them. Run all scripts from this directory.
 ## Available scripts
 
 - `scripts/check_collector_health.py` — which scrape targets are up or down
-- `scripts/metric_timeline.py <metric> [--minutes N] [--transitions]` — how a
-  metric moved, and when it changed
+- `scripts/metric_timeline.py <metric> [--minutes N] [--transitions] [--find-anomaly]` — how a metric moved, when it changed, and where its rate shifted
 - `scripts/compare_ranks.py <metric> [--minutes N] [--stat delta|mean]` —
   compare a metric across ranks
 - `scripts/list_metrics.py [--filter SUBSTR]` — what metrics exist
@@ -48,9 +47,15 @@ synchronises ranks and makes NCCL metrics uniform even when one GPU is slow.
 
 **4. When did it change?**
 
-    python scripts/metric_timeline.py <metric> --minutes 60 --transitions
+    python scripts/metric_timeline.py <metric> --minutes 60 --find-anomaly
 
-Prints timestamps where a value changed sharply. Add `--threshold 0.5` if noisy.
+Reports the most recent point where each series' *rate of change* shifted.
+This catches both a gauge dropping (a clamped clock) and a counter freezing
+(a dead rank or collector), and it does not require you to guess a window —
+scan wide and it will tell you when things went wrong.
+
+Use `--transitions` instead if you want every change point rather than just
+the most recent.
 
 **5. If a metric name returns no data**
 
