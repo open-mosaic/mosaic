@@ -28,7 +28,7 @@ Using `delta` on a gauge yields ~0 for every rank and a meaningless ratio.
 
 ---
 
-## 1. GPU clock clamp (T2.2)
+## 1. GPU clock clamp
 
 | check | result |
 |---|---|
@@ -44,9 +44,14 @@ below its peers → that rank's GPU is clock-limited.
 Worked example (2-node Blackwell reference cluster): healthy SM clock
 2790–2820 MHz, spread ~1%. Clamped rank read 742 MHz, ratio 0.26.
 
+A clamp is a **step change to a fixed value**, not a gradual decline. If the
+clock appears to be "trending down", that is window dilution — the mean is
+averaging pre-clamp and post-clamp samples. Narrow the window to see the true
+clamped value.
+
 ---
 
-## 2. Network degradation — netem delay/loss (T2.3)
+## 2. Network degradation — netem delay/loss
 
 | check | result |
 |---|---|
@@ -58,10 +63,19 @@ Worked example (2-node Blackwell reference cluster): healthy SM clock
 **Diagnosis by elimination:** throughput down, ranks uniform, GPU clocks all
 healthy, telemetry pipeline healthy → the interconnect is degraded.
 
-Worked example: healthy ~4.6 GB/min per rank; under 50 ms added delay,
-~2.3 GB/min (roughly half). Severe delay can reduce counter growth enough
-that short windows show near-zero movement — widen the window before
-concluding the counters have stopped.
+**Key signal:** netem produces no per-rank divergence — every rank stays
+uniform, which superficially looks healthy. The fault shows only as the
+*whole cluster's* rate dropping relative to its own earlier healthy period.
+Uniformity across ranks does NOT mean healthy.
+
+Use `--find-anomaly` over a wide window and read the rate transition:
+- rate → **0.00/s** on all ranks = stopped (collector kill or job death)
+- rate → **a lower nonzero value** on all ranks = degraded, still running
+- rate drop + all SM clocks normal + collector UP = **network degradation**
+- rate drop + one SM clock low = clock clamp, not network
+
+Worked example (reference cluster): healthy ~78.9 MB/s per rank; under 20 ms
+added delay this fell to ~26.3 MB/s — a uniform step-down to roughly a third.
 
 **Known limitation:** node-level network counters
 (`node_network_*`, `node_netstat_*`) report the node-exporter *container's*
@@ -71,7 +85,8 @@ do not attempt to name the node from metrics alone.
 
 ---
 
-## 3. OTel collector killed (T2.5)
+## 3. OTel collector killed
+
 
 | check | result |
 |---|---|
@@ -85,28 +100,67 @@ failure. The job is still running; you simply cannot see it.
 
 ---
 
-## 4. Rank killed (T2.4)
+## 4. Rank killed
 
 | check | result |
 |---|---|
 | collector health | all targets UP (**collector still UP**) |
-| collective bytes, `--stat delta` | **one rank 0.00, peers ~1.00** |
+| collective bytes, `--stat delta` | **all ranks 0.00 — every series frozen** |
 
-**Diagnosis:** one rank's counters freeze while peers keep advancing, and the
-collector is healthy → that rank's process died.
+**Diagnosis:** all counters freeze abruptly while the collector stays healthy → the job stopped; check the stagger to identify a dying rank.
 
-Peers may continue for a period before the job aborts, so do not require all
-ranks to stop. The discriminator against fault 3 is: **collector UP + only
-some ranks frozen**.
+In practice the job aborts within seconds of a rank dying, so by the time you
+look, **all** ranks are usually frozen. The reliable discriminator against
+fault 3 is therefore the collector state, not which ranks stopped:
 
+- all ranks frozen + collector **UP** → the job died (rank killed)
+- all ranks frozen + collector **DOWN** → telemetry gap (collector killed)
+
+**The dying rank is identifiable from timing.** Its counter stops roughly
+10–20 seconds before its peers', because the survivors keep running until
+they block on the next collective. `--find-anomaly` timestamps reveal the
+order: the rank with the *earliest* stop is the one that died. GPU clocks
+drop to idle in the same order, node by node.
+
+Worked example (reference cluster): rank 2 on golf stopped at 18:12:24; the
+other three stopped at 18:12:39; golf's GPUs idled at 18:12:50 and bravo's at
+18:13:05.
+
+If the timestamps are all identical, the stagger has been lost to the scrape
+interval — fall back to reporting that the job stopped, and note that a killed
+rank and a completed run are indistinguishable in that case.
 ---
+## Distinguishing the "flatline" cases
 
-## Distinguishing the two "flatline" faults
+When every NCCL counter stops advancing, the collector state is the
+discriminator — NOT which ranks stopped:
 
-This is the distinction that matters most:
+- All ranks frozen + collector **DOWN** → collector killed (3).
+  The job is still running; you have lost visibility into it.
+-
+  - All ranks frozen + collector **UP** → **the job stopped**. The telemetry is
+  working fine, so the stop is real: either a rank died or the run completed.
+  Check the stagger (below) to tell which.
 
-- **All** ranks frozen + collector **DOWN** → collector killed (§3)
-- **One** rank frozen + collector **UP** → rank killed (§4)
+**A killed rank and a normally completed job look similar in metrics.** Both
+show all ranks freezing with the collector healthy, and GPUs dropping to idle
+clocks. Do not rule out a rank kill merely because there is no asymmetry
+between ranks — by the time you look, the surviving ranks have already blocked
+on the collective and stopped too.
+
+The exception is the stop-order stagger described under Rank killed: if one
+rank stopped measurably before the others, a rank died.
+
+Both show all ranks freezing simultaneously with the collector healthy, and
+GPUs dropping to idle clocks. Prometheus cannot distinguish them. Do not rule
+out a rank kill merely because there is no asymmetry between ranks — by the
+time you look, the surviving ranks have already blocked on the collective and
+stopped too.
+
+Use context to choose between them:
+- Was the job running normally right up to an abrupt stop? → a rank died.
+- Did throughput taper or was the run near its expected end? → completion.
+- If you cannot tell, say so: "the job stopped at <time>; this is either a killed rank or a completed run, and the metrics cannot distinguish them."
 
 ## Environment noise — not faults
 

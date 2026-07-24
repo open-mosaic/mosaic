@@ -32,7 +32,7 @@ targets being DOWN — that is the normal idle state.
 
 **2. What is the overall picture?**
 
-    python scripts/metric_timeline.py nccl_profiler_collective_bytes_total --minutes 5
+    python scripts/metric_timeline.py nccl_profiler_collective_bytes_total --minutes 2
 
 Is throughput normal, reduced, or completely stopped (first == last)?
 
@@ -47,7 +47,10 @@ synchronises ranks and makes NCCL metrics uniform even when one GPU is slow.
 
 **4. When did it change?**
 
-    python scripts/metric_timeline.py <metric> --minutes 60 --find-anomaly
+    python scripts/metric_timeline.py <metric> --minutes 15 --find-anomaly
+
+Keep this window modest (15 minutes is usually right). Prometheus retains
+history, so a wide scan will surface faults that have already been resolved.
 
 Reports the most recent point where each series' *rate of change* shifted.
 This catches both a gauge dropping (a clamped clock) and a counter freezing
@@ -62,6 +65,22 @@ the most recent.
     python scripts/list_metrics.py --filter nccl
 
 An unrecognised name returns "no data", which is NOT the same as flatlined.
+
+## Verify the fault is still active
+
+Before reporting anything, confirm it is happening **now**, not in the past.
+Re-check the metric over the most recent 1–2 minutes:
+
+    python scripts/compare_ranks.py DCGM_FI_DEV_SM_CLOCK --minutes 2 --stat mean
+
+If the values have returned to normal, the fault is historical — say so
+explicitly ("a clock clamp occurred at 09:38 but has since been cleared")
+rather than reporting it as a current problem.
+
+Signs you are looking at a resolved fault: the metric's mean over a window is
+between healthy and faulty values, the series shows a return to normal near
+the end of the window, or the anomaly timestamp is many minutes old.
+
 
 ## Do not write raw PromQL or inline Python
 
@@ -80,9 +99,9 @@ diluted. A GPU clamped to 26% of peers reads 0.86 over a mostly-pre-fault
 10-minute window, but 0.26 over a 3-minute post-fault window. If a ratio looks
 mildly off rather than clearly wrong, narrow the window and re-check.
 
-Note that Prometheus retains history: widening the window may surface an OLD
-fault that has already been resolved. Check whether the fault is still active
-before reporting it as current.
+If a ratio looks mildly off rather than clearly wrong, narrow the window once
+and re-check. Do not iterate further — one narrowing is enough to tell a real
+divergence from a diluted one.
 
 ## Reading the results
 
@@ -93,3 +112,19 @@ distinguishing them. See `metrics-reference.md` for which metrics to trust.
 
 State the fault type, the evidence, and what you ruled out. If evidence is
 ambiguous, say so rather than guessing.
+
+
+## Be decisive
+
+Reach a diagnosis in as few steps as possible. The four checks above are
+usually sufficient. Once the evidence is unambiguous, stop investigating and
+report — do not re-run the same comparison at multiple window sizes to refine
+a number that is already conclusive, and do not pursue corroborating evidence
+for a finding that is already clear.
+
+A clock ratio of 0.5 against uniform peers is already diagnostic; you do not
+need to narrow the window until it reads 0.26. Report the finding and the
+window you measured it over.
+
+If a check returns something ambiguous or unhelpful, move on rather than
+retrying it a different way.
