@@ -72,6 +72,8 @@ def run_trial(fault_name):
 
     print("[1/6] restoring cluster...")
     bravo("make restore")
+    print("      waiting 90s for old fault data to clear the recent window...")
+    time.sleep(90)
 
     print("[2/6] ensuring workload is running...")
     status = bravo("make status")

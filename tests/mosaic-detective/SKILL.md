@@ -31,8 +31,17 @@ improvising — a query with a wrong label returns empty, which reads as
 
     python scripts/check_collector_health.py
 
-If `otel-collector` is DOWN, metrics have stopped arriving. `vllm-*` targets
-being DOWN is the normal idle state — ignore them.
+`up` is authoritative. If `otel-collector` shows DOWN, the collector is down —
+report it. Do NOT talk yourself out of this because NCCL metrics still look
+recent: after the collector dies, its last samples linger in Prometheus and
+appear "fresh" for a minute or two even though nothing new is arriving. Stale-
+but-present data is the EXPECTED look of a just-killed collector, not evidence
+against it.
+
+Confirm which it is by checking whether NCCL counters are still *advancing*:
+re-query collective bytes over the last 1–2 minutes and compare the newest
+value to one from 30s earlier. If it has not moved, the collector is dead even
+if the last value is recent. `vllm-*` targets being DOWN is normal — ignore.
 
 **2. What is the overall picture?**
 

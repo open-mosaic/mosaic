@@ -17,6 +17,10 @@ REPORT_DIR = os.path.expanduser("~/mosaic/tests/mosaic-detective/reports")
 
 DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK", "")
 
+import time
+
+_last_fired = 0.0
+COOLDOWN_SECONDS = 180
 
 def post_to_discord(text):
     print(f"  webhook set: {bool(DISCORD_WEBHOOK)}, len={len(DISCORD_WEBHOOK)}")
@@ -53,6 +57,16 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length).decode() if length else ""
         print(f"\n[{datetime.now():%H:%M:%S}] alert received")
+        global _last_fired
+        now = time.time()
+        if now - _last_fired < COOLDOWN_SECONDS:
+            remaining = int(COOLDOWN_SECONDS - (now - _last_fired))
+            print(f"  within cooldown ({remaining}s left), ignoring")
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"cooldown\n")
+            return
+        _last_fired = now
         try:
             payload = json.loads(body)
             print(f"  alert: {payload.get('title', payload.get('status', 'unknown'))}")
