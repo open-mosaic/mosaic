@@ -101,3 +101,5 @@ segfault
 oom
 mhz
 uncorrectable
+config
+rollout
