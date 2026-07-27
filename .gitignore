@@ -13,3 +13,4 @@ __pycache__/
 .ruff_cache/
 
 docs/site/**/*
+.env.local

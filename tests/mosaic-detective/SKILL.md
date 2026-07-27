@@ -78,9 +78,14 @@ clock ratio of 0.5 against uniform peers is already diagnostic; you need not
 narrow until it reads 0.26. If a check is ambiguous or unhelpful, move on
 rather than retrying it a different way.
 
+Decisiveness applies to fault *type*, which the four checks resolve reliably.
+It does not apply to naming a specific rank as the cause of a job stop — that
+has its own procedure in fault-signatures.md and "unresolved" is a valid
+verdict there.
+
 ## Window strategy
 
-Faults are usually recent. Start narrow (`--minutes 2`), widen only if you
+Faults are usually recent. Sdtart narrow (`--minutes 2`), widen only if you
 find nothing. A ratio over a window spanning both healthy and faulty periods
 is diluted — a GPU clamped to 26% of peers reads 0.86 over a mostly-pre-fault
 10-minute window but 0.26 over a 3-minute post-fault window. If a ratio looks

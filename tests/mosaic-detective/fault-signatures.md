@@ -32,8 +32,6 @@ Using `delta` on a gauge yields ~0 for every rank and a meaningless ratio.
 **Diagnosis:** throughput down, ranks uniform, one GPU's clock ratio well
 below its peers → that rank's GPU is clock-limited.
 
-Worked example (2-node Blackwell reference cluster): healthy SM clock
-2790–2820 MHz, spread ~1%. Clamped rank read 742 MHz, ratio 0.26.
 
 A clamp is a **step change to a fixed value**, not a gradual decline. If the
 clock appears to be "trending down", that is window dilution — the mean is
@@ -64,9 +62,6 @@ Read the rate transition (`--find-anomaly` on collective bytes):
 - rate → **lower nonzero** on all ranks = degraded, still running
 - rate drop + all SM clocks normal + collector UP = **network degradation**
 - rate drop + one SM clock low = clock clamp, not network
-
-Worked example: healthy ~78.9 MB/s per rank; under 20 ms added delay this fell
-to ~26.3 MB/s.
 
 **A pure delay fault is transient.** TCP adapts its congestion window within
 1–2 minutes and throughput recovers, after which the cluster looks healthy
@@ -107,18 +102,37 @@ The job aborts within seconds of a rank dying, so by the time you look, all
 ranks are usually frozen — the collector state, not which ranks stopped, is
 the discriminator.
 
-**The dying rank is identifiable from timing.** Its counter stops roughly
-10–20 seconds before its peers', because the survivors keep running until they
-block on the next collective. `--find-anomaly` timestamps reveal the order:
-the rank with the earliest stop is the one that died. GPU clocks drop to idle
-in the same order, node by node.
+**Localising the dead rank — apply in order, stop at the first that resolves.**
 
-Worked example: rank 2 on golf stopped at 18:12:24; the other three at
-18:12:39; golf's GPUs idled at 18:12:50 and bravo's at 18:13:05.
+The job aborts within seconds of a rank dying, so by the time you look, all
+ranks are usually frozen — the collector state, not which ranks stopped, is
+the discriminator for *fault type*. Localising *which* rank died is a separate
+question and often unanswerable.
 
-If the timestamps are all identical, the stagger has been lost to the scrape
-interval — report that the job stopped, and note that a killed rank and a
-completed run are indistinguishable in that case.
+1. `metric_timeline.py namedprocess_namegroup_num_procs --minutes 15 --find-anomaly`
+   If one host steps 2→1 while the other is still at 2, the dying rank is on
+   that host. Report **confirmed (host)**. If both hosts step 2→0 within the
+   same sample, this check is exhausted — continue.
+
+2. `metric_timeline.py nccl_profiler_collective_bytes_total --minutes 15 --find-anomaly`
+   Compare stop timestamps **only between ranks on the same host**. Ranks on
+   different hosts are scraped by different targets and their timestamps may
+   differ by up to one scrape interval from scrape phase alone — a cross-host
+   stagger is not evidence and must not be reported as such.
+
+3. A rank showing a **reduced but nonzero final sample** while its peers are
+   already at zero is the **last survivor**, not the victim. It kept moving
+   bytes after the others blocked. Do not name it as the dead rank. The victim
+   typically stops in the same sample as its healthy same-host peer and leaves
+   no signature at all.
+
+4. Otherwise, report: "the job stopped; the dying rank is not resolvable at
+   this scrape resolution." This is a complete and correct answer. Do NOT name
+   a rank on the strength of a single-interval difference or a trailing partial
+   — naming the wrong rank is worse than reporting it unresolved.
+
+Always state a confidence: **confirmed** (step 1 resolved it) or **unresolved**
+(step 4). Never name a rank without one.
 
 ---
 
