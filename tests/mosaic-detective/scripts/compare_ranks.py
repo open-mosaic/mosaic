@@ -29,6 +29,8 @@ def main():
     try:
         topology = client.rank_topology(minutes=args.minutes)
     except MosaicQueryError:
+        print("warning: rank mapping unavailable; DCGM series cannot be "
+              "attributed to ranks in this window", file=sys.stderr)
         topology = {}
     uuid_to_rank = {info["gpu_uuid"]: rank for rank, info in topology.items()}
 

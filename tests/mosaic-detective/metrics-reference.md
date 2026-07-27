@@ -12,6 +12,7 @@
 | `DCGM_FI_DEV_POWER_USAGE` | gauge | mean | per-GPU power draw |
 | `up` | gauge | — | scrape target liveness, via check_collector_health |
 | `mosaic_gpu_rank_mapping` | info | — | rank to hostname/gpu_uuid; only exports during a workload |
+| `namedprocess_namegroup_num_procs` | gauge | mean | per-host workload process count, grouped by a deployment-specific `groupname`; no `rank` label, so localises to host only. Only present if the cluster runs process-exporter — confirm with `list_metrics.py --filter namedprocess` before relying on it. |
 
 ## Avoid
 
@@ -32,3 +33,9 @@ NCCL metrics carry `rank` and `hostname` directly.
 DCGM metrics carry `UUID`, `host`, `gpu` but no `rank`. `compare_ranks.py`
 joins them to ranks via `mosaic_gpu_rank_mapping`, which requires a running
 workload. Use `host` (lowercase), not `Hostname` — the latter is a container ID.
+`namedprocess_namegroup_num_procs` carries `groupname` and a host label but no
+`rank`. It can name a host, never a rank. Combine with the rank-to-host mapping
+to narrow candidates.
+After a job stops, `mosaic_gpu_rank_mapping` stops exporting. Rank attribution
+for DCGM metrics then depends on historical samples, so use a window wide
+enough to include the pre-stop period.

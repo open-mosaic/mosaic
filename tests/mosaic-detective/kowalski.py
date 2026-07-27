@@ -6,8 +6,8 @@ The alert receiver runs in a daemon thread alongside the Discord client, so the
 two share a plain module-level mode flag -- no state file, no control port.
 
 Modes (what happens when a Grafana alert arrives):
-    armed     diagnose automatically and post the report
-    notify    post that an alert fired; wait for a human to ask for a diagnosis
+    armed     announce the alert, then diagnose it and post the report
+    notify    announce the alert; wait for a human to ask for a diagnosis
     disarmed  log it in the terminal only, post nothing
 
 Commands (all prefixed "Kowalski,"):
@@ -124,6 +124,9 @@ def post_to_discord(text):
                      "User-Agent": "Kowalski/1.0"})
         try:
             urllib.request.urlopen(req, timeout=10)
+        except urllib.error.HTTPError as e:
+            print(f"  Discord rejected the post: {e.code} — {e.read().decode()[:200]}")
+            return
         except Exception as e:
             print(f"  Discord post failed: {e}")
             return
@@ -140,17 +143,27 @@ class Handler(BaseHTTPRequestHandler):
         body = self.rfile.read(length).decode() if length else ""
         print(f"\n[{datetime.now():%H:%M:%S}] alert received")
 
-        title = "unknown"
+        title, status = "unknown", ""
         try:
             payload = json.loads(body)
-            title = payload.get("title", payload.get("status", "unknown"))
+            status = payload.get("status", "")
+            title = payload.get("title", status or "unknown")
             print(f"  alert: {title}")
         except json.JSONDecodeError:
             print("  (body was not JSON)")
 
-        # Acknowledge before any slow work so Grafana does not time out.
+        # Acknowledge immediately. The diagnosis runs on its own thread below,
+        # because holding this connection open for the ~90s a run takes makes
+        # Grafana time out and retry, producing bursts of duplicate alerts.
         self.send_response(200)
         self.end_headers()
+
+        # A resolved notification means the cluster recovered. Diagnosing that
+        # spends a full model invocation to report that nothing is wrong.
+        if status == "resolved":
+            print("  resolved notification — ignoring")
+            self.wfile.write(b"resolved\n")
+            return
 
         if MODE == DISARMED:
             print("  disarmed — logged locally, nothing posted")
@@ -166,22 +179,35 @@ class Handler(BaseHTTPRequestHandler):
             return
         _last_fired = now
 
+        banner = f"⚠️ **Alert fired** — {title}"
+
         if MODE == NOTIFY:
             self.wfile.write(b"notified\n")
             print("  notify mode — announced, not diagnosing")
-            post_to_discord(
-                f"⚠️ **Alert fired** — {title}\n"
-                f"On standby. Say `Kowalski, analysis` if you want this diagnosed.")
+            threading.Thread(
+                target=post_to_discord, daemon=True,
+                args=(f"{banner}\nOn standby. Say `Kowalski, analysis` "
+                      f"if you want this diagnosed.",)).start()
             return
 
         self.wfile.write(b"received\n")
+        threading.Thread(target=self._diagnose, args=(banner,), daemon=True).start()
+
+    def _diagnose(self, banner):
+        """Announce, run the detective, post the report. Runs off the HTTP
+        handler thread so the webhook response is not held open."""
+        # Announce first: a diagnosis takes about a minute, and silence for
+        # that long looks like nothing happened.
+        post_to_discord(f"{banner}\nAye aye, Skipper. Diagnosing now — report to follow.")
+
         print("  running detective...")
         report = run_detective()
         if report is None:
             print("  a diagnosis is already running, skipping")
+            post_to_discord("A diagnosis is already in progress — this alert is covered by it.")
             return
 
-        post_to_discord(f"**Kowalski, analysis!**\n{report}")
+        post_to_discord(report)
         print("=" * 60)
         print(report)
         print("=" * 60)
@@ -201,8 +227,8 @@ def start_receiver():
 HELP = (
     "**Kowalski commands**\n"
     "`Kowalski, analysis` — diagnose the cluster now (works in any mode)\n"
-    "`Kowalski, arm` — diagnose alerts automatically\n"
-    "`Kowalski, notify` — announce alerts here, diagnose only on request\n"
+    "`Kowalski, arm` — announce alerts and diagnose them automatically\n"
+    "`Kowalski, notify` — announce alerts, diagnose only on request\n"
     "`Kowalski, disarm` — log alerts locally, post nothing\n"
     "`Kowalski, status` — show the current mode\n"
     "`Kowalski, help` — this message"
