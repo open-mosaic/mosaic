@@ -6,6 +6,7 @@ Tests for vLLM inference with NCCL Profiler OTEL.
 These tests validate that the NCCL profiler is exporting telemetry correctly.
 """
 
+import math
 import time
 
 import pytest
@@ -20,8 +21,10 @@ from profiler_otel.conftest import expected_nccl_profiler_metrics
 # =============================================================================
 WORKLOAD_TIMEOUT = 600  # 10 minutes
 
-# How long to wait for NCCL metrics to be scraped into Prometheus after a
-# workload completes, and how often to re-check while waiting.
+# How long to wait for NCCL metrics to reach Prometheus after a workload
+# completes, and how often to re-check while waiting. Worst case between
+# the last NCCL op and a sample being queryable is roughly 16s. This
+# timeout is ~4x that budget.
 METRICS_AVAILABLE_TIMEOUT = 60  # seconds
 METRICS_POLL_INTERVAL = 2  # seconds
 
@@ -129,29 +132,38 @@ class TestNCCLProfilerTelemetry:
         # finishes (empirically ~10s). Rather than sleeping a fixed amount, poll
         # the expected metric set and record each metric as soon as it appears,
         # returning immediately once all are present or once the timeout elapses.
+        # We'll move the end time window for each iteration of the poll to make sure
+        # we don't accidentally exclude any late arriving metrics.
         nccl_profiler_metrics = expected_nccl_profiler_metrics(workload)
 
-        def metric_has_data(metric_name: str) -> bool:
-            """True when Prometheus has at least one series for *metric_name* in the workload window."""
+        def query_prometheus(promql: str) -> list:
+            """Run an instant query and return its result series (empty on any failure)."""
             try:
                 response = requests.get(
-                    f"{prometheus_url}/api/v1/query_range",
-                    params={
-                        "query": metric_name,
-                        "start": workload_result.start_time,
-                        "end": workload_result.end_time,
-                        "step": "1.0",
-                    },
+                    f"{prometheus_url}/api/v1/query",
+                    params={"query": promql},
                     timeout=10,
                 )
             except requests.exceptions.RequestException:
-                return False
+                return []
             if response.status_code != 200:
-                return False
+                return []
             data = response.json()
             if data.get("status") != "success":
-                return False
-            return bool(data.get("data", {}).get("result", []))
+                return []
+            return data.get("data", {}).get("result", [])
+
+        def metric_has_data(metric_name: str) -> bool:
+            """True when Prometheus holds a sample for *metric_name* timestamped after the workload started."""
+            window_s = max(1, math.ceil(time.time() - workload_result.start_time) + 1)
+            return bool(
+                query_prometheus(f"count_over_time({metric_name}[{window_s}s])")
+            )
+
+        print(
+            f"  Workload window: start={workload_result.start_time:.3f} "
+            f"end={workload_result.end_time:.3f}"
+        )
 
         found_metrics: list[str] = []
         deadline = time.monotonic() + METRICS_AVAILABLE_TIMEOUT
@@ -160,7 +172,10 @@ class TestNCCLProfilerTelemetry:
             for metric_name in nccl_profiler_metrics:
                 if metric_name not in found_metrics and metric_has_data(metric_name):
                     found_metrics.append(metric_name)
-                    print(f"    Found: {metric_name}")
+                    print(
+                        f"    Found: {metric_name} "
+                        f"(+{time.time() - workload_result.end_time:.1f}s after workload end)"
+                    )
 
             if (
                 len(found_metrics) == len(nccl_profiler_metrics)
@@ -176,6 +191,27 @@ class TestNCCLProfilerTelemetry:
         )
         if missing_metrics:
             print(f"  Missing metrics: {missing_metrics}")
+            # Re-query each missing metric with no time bound. Whether the series
+            # exists, and where its newest sample sits relative to the workload,
+            # separates the failure modes for whoever reads the CI log:
+            #   no series at all    -> nothing was exported; check vLLM, the OTLP
+            #                          endpoint and the collector (see
+            #                          sv/scripts/openmosaic-diagnostics.sh)
+            #   newest > end_time   -> ingest lag; raise METRICS_AVAILABLE_TIMEOUT
+            #   newest < start_time -> the series is stale; the profiler produced
+            #                          nothing for this workload
+            print("  Diagnostics (unbounded instant query per missing metric):")
+            for metric_name in missing_metrics:
+                series = query_prometheus(metric_name)
+                if not series:
+                    print(f"    {metric_name}: no series in Prometheus")
+                    continue
+                newest = max(float(s["value"][0]) for s in series)
+                print(
+                    f"    {metric_name}: {len(series)} series, newest sample "
+                    f"{newest - workload_result.start_time:+.1f}s vs workload start, "
+                    f"{newest - workload_result.end_time:+.1f}s vs workload end"
+                )
 
         assert not missing_metrics, (
             f"Expected {len(nccl_profiler_metrics)} metrics, found {len(found_metrics)} "
