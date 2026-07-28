@@ -30,7 +30,7 @@ def main():
     parser.add_argument("--step", default="15s", help="sample interval")
     parser.add_argument("--transitions", action="store_true",help="report timestamps where the value changed sharply")
     parser.add_argument("--find-anomaly", action="store_true",help="scan for the most recent change in rate of change")
-    parser.add_argument("--threshold", type=float, default=0.2,help="fractional change counted as a transition (default 0.2 = 20%%)")
+    parser.add_argument("--threshold", type=float, default=0.2,help="fractional change counted as a transition, for --transitions only (default 0.2 = 20%%)")
     args = parser.parse_args()
 
     end = time.time()
@@ -62,7 +62,7 @@ def main():
                 when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
                 print(f"    transition at {when}: {before:.1f} -> {after:.1f}")
         if args.find_anomaly:
-            anomalies = find_anomalies(series.values, args.threshold)
+            anomalies = find_anomalies(series.values)
             if anomalies:
                 for ts, before, after in anomalies:
                     when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
@@ -91,7 +91,7 @@ def find_anomalies(values, threshold=0.5):
         rates.append((values[i][0], dv / dt if dt else 0.0))
 
     out = []
-    for i in range(1, len(rates)-2):
+    for i in range(1, len(rates)):
         prev_rate = rates[i - 1][1]
         curr_rate = rates[i][1]
         # A shift is significant if it moves by more than `threshold` of the
