@@ -45,9 +45,25 @@ if the last value is recent. `vllm-*` targets being DOWN is normal — ignore.
 
 **2. What is the overall picture?**
 
-    python scripts/metric_timeline.py nccl_profiler_collective_bytes_total --minutes 2
+    python scripts/metric_timeline.py nccl_profiler_collective_bytes_total --minutes 1
+    python scripts/metric_timeline.py nccl_profiler_collective_bytes_total --minutes 15
 
 Is throughput normal, reduced, or completely stopped (first == last)?
+
+**Always compare the two.** Convert each to MB/s per rank: (last - first) /
+seconds / 1e6. The 15-minute figure is the cluster's own recent baseline; the
+1-minute figure is now.
+
+If the 1-minute rate is below ~0.8x the 15-minute rate, throughput is
+degrading **right now** and you must not report healthy. A fault that started
+seconds ago barely moves the 15-minute average but halves the 1-minute one —
+this ratio is the only thing that catches a degradation in its first minute.
+
+Both figures being equally low is also degradation, once the fault has run
+long enough to drag the wide window down. Compare that value against the
+known healthy rate in fault-signatures.md before concluding health.
+
+State both numbers in your report.
 
 **3. Is it one rank, or all of them?**
 
@@ -85,7 +101,7 @@ verdict there.
 
 ## Window strategy
 
-Faults are usually recent. Sdtart narrow (`--minutes 2`), widen only if you
+Faults are usually recent. Start narrow (`--minutes 2`), widen only if you
 find nothing. A ratio over a window spanning both healthy and faulty periods
 is diluted — a GPU clamped to 26% of peers reads 0.86 over a mostly-pre-fault
 10-minute window but 0.26 over a 3-minute post-fault window. If a ratio looks
