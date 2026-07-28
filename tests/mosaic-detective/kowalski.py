@@ -78,7 +78,9 @@ def run_detective():
             result = subprocess.run(
                 ["claude", "-p", "Kowalski, analysis"],
                 capture_output=True, text=True, timeout=TIMEOUT,
+                stdin=subprocess.DEVNULL,
                 cwd=SKILL_DIR, env=env)
+            
         except subprocess.TimeoutExpired:
             return f"Detective timed out after {TIMEOUT}s."
         except FileNotFoundError:
