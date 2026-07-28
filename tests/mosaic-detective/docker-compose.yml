@@ -1,0 +1,19 @@
+services:
+  kowalski:
+    build: .
+    container_name: kowalski
+    restart: unless-stopped
+    env_file:
+      - .env.local
+    environment:
+      # Overrides the workstation value in .env.local: inside the LGTM
+      # network Prometheus is reachable by container name.
+      PROMETHEUS_HOST: mosaic-otel-lgtm
+      PROMETHEUS_PORT: 9090
+    networks:
+      - lgtm
+
+networks:
+  lgtm:
+    name: deployments_nccl-profiler
+    external: true
