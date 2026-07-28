@@ -46,17 +46,17 @@ if the last value is recent. `vllm-*` targets being DOWN is normal — ignore.
 **2. What is the overall picture?**
 
     python scripts/metric_timeline.py nccl_profiler_collective_bytes_total --minutes 1
-    python scripts/metric_timeline.py nccl_profiler_collective_bytes_total --minutes 15
+    python scripts/metric_timeline.py nccl_profiler_collective_bytes_total --minutes 5
 
 Is throughput normal, reduced, or completely stopped (first == last)?
 
 **Always compare the two.** Convert each to MB/s per rank: (last - first) /
-seconds / 1e6. The 15-minute figure is the cluster's own recent baseline; the
+seconds / 1e6. The 5-minute figure is the cluster's own recent baseline; the
 1-minute figure is now.
 
-If the 1-minute rate is below ~0.8x the 15-minute rate, throughput is
+If the 1-minute rate is below ~0.8x the 5-minute rate, throughput is
 degrading **right now** and you must not report healthy. A fault that started
-seconds ago barely moves the 15-minute average but halves the 1-minute one —
+seconds ago barely moves the 5-minute average but halves the 1-minute one —
 this ratio is the only thing that catches a degradation in its first minute.
 
 Both figures being equally low is also degradation, once the fault has run
