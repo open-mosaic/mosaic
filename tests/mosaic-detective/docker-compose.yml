@@ -10,6 +10,7 @@ services:
       # network Prometheus is reachable by container name.
       PROMETHEUS_HOST: mosaic-otel-lgtm
       PROMETHEUS_PORT: 9090
+      TZ: America/Los_Angeles
     networks:
       - lgtm
 
