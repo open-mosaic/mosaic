@@ -1,0 +1,10 @@
+apiVersion: 1
+contactPoints:
+    - orgId: 1
+      name: Kowalski
+      receivers:
+        - uid: dft7p8n7m8f0gf
+          type: webhook
+          settings:
+            url: http://100.117.193.103:8500
+          disableResolveMessage: false
