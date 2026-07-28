@@ -6,5 +6,5 @@ contactPoints:
         - uid: dft7p8n7m8f0gf
           type: webhook
           settings:
-            url: http://100.117.193.103:8500
+            url: http://kowalski:8500
           disableResolveMessage: false
