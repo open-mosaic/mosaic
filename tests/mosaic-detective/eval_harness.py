@@ -24,11 +24,11 @@ FAULTS = {
         "restarts_workload": False,
         "truth": "GPU clock clamp on one GPU (rank 3, golf)",
     },
-    "netem_delay": {
-        "inject": "make inject-netem-delay MS=20 DEADMAN=900",
+    "netem_loss": {
+        "inject": "make inject-netem-loss PCT=0.1 DEADMAN=900",
         "settle": 15,
         "restarts_workload": False,
-        "truth": "network degradation (added latency on the interconnect)",
+        "truth": "network degradation (packet loss on the interconnect; the affected node is not resolvable)",
     },
     "kill_collector": {
         "inject": "make inject-kill-collector DEADMAN=600",
@@ -40,7 +40,9 @@ FAULTS = {
         "inject": "make inject-kill-rank RANK=2",
         "settle": 15,
         "restarts_workload": True,
-        "truth": "a rank process was killed (rank 2 on golf)",
+        # Naming the dead rank is not resolvable at 15s scrape resolution,
+        # so the correct answer stops at "the job stopped".
+        "truth": "the job stopped (a rank was killed; which rank is not resolvable)",
     },
 }
 
@@ -59,6 +61,7 @@ def ask_claude(prompt="Kowalski, analysis", timeout=900):
     result = subprocess.run(
         ["claude", "-p", prompt],
         capture_output=True, text=True, timeout=timeout,
+        stdin=subprocess.DEVNULL,
         cwd=os.path.expanduser(SKILL_DIR))
     return result.stdout
 
