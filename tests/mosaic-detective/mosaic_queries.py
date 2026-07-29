@@ -5,10 +5,10 @@
 from __future__ import annotations
 
 import os
-
-import requests
 import time
 from dataclasses import dataclass
+
+import requests
 
 
 @dataclass
@@ -45,8 +45,8 @@ class MosaicClient:
             "step": step,
         })
 
-    def query_instant(self, query: str, time=None) -> dict:
-        return self._get("/api/v1/query", {"query": query, "time": time})
+    def query_instant(self, query: str, at=None) -> dict:
+        return self._get("/api/v1/query", {"query": query, "time": at})
 
     def _get(self, path: str, params: dict | None = None) -> dict:
         url = f"{self.base_url}{path}"
