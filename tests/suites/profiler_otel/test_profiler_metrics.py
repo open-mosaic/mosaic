@@ -199,7 +199,7 @@ class TestNCCLProfilerTelemetry:
             #   newest > end_time   -> ingest lag; raise METRICS_AVAILABLE_TIMEOUT
             #   newest < start_time -> the series is stale; the profiler produced
             #                          nothing for this workload
-            print("  Diagnostics (unbounded instant query per missing metric):")
+            print("  Missing metrics diagnostics:")
             for metric_name in missing_metrics:
                 series = query_prometheus(metric_name)
                 if not series:
@@ -208,8 +208,8 @@ class TestNCCLProfilerTelemetry:
                 newest = max(float(s["value"][0]) for s in series)
                 print(
                     f"    {metric_name}: {len(series)} series, newest sample "
-                    f"{newest - workload_result.start_time:+.1f}s vs workload start, "
-                    f"{newest - workload_result.end_time:+.1f}s vs workload end"
+                    f"{newest - workload_result.start_time:+.1f}s vs workload start timestamp of {workload_result.start_time:+.1f}, "
+                    f"{newest - workload_result.end_time:+.1f}s vs workload end timestamp of {workload_result.end_time:+.1f}"
                 )
 
         assert not missing_metrics, (
