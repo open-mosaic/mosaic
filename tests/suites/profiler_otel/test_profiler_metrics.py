@@ -195,8 +195,7 @@ class TestNCCLProfilerTelemetry:
             # exists, and where its newest sample sits relative to the workload,
             # separates the failure modes for whoever reads the CI log:
             #   no series at all    -> nothing was exported; check vLLM, the OTLP
-            #                          endpoint and the collector (see
-            #                          sv/scripts/openmosaic-diagnostics.sh)
+            #                          endpoint and the collector
             #   newest > end_time   -> ingest lag; raise METRICS_AVAILABLE_TIMEOUT
             #   newest < start_time -> the series is stale; the profiler produced
             #                          nothing for this workload
