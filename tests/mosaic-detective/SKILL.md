@@ -3,6 +3,11 @@ name: mosaic-detective
 description: Diagnose faults in an OpenMosaic GPU cluster from Prometheus metrics. Use when asked what happened to a cluster, why collectives slowed down, why GPU metrics stopped, what caused a throughput drop, to investigate a suspected NCCL, GPU, network, or telemetry fault at a given time, or when the user says "Kowalski, analysis!".
 ---
 
+<!--
+SPDX-FileCopyrightText: 2025 Delos Data Inc
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Mosaic Detective
 
 Diagnose faults in a multi-GPU OpenMosaic cluster by querying its Prometheus
