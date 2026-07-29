@@ -62,7 +62,6 @@ def main():
         ranks[key] = {
             "mean": sum(vals) / len(vals),
             "delta": vals[-1] - vals[0],
-            "last": vals[-1],
             "hostname": (series.labels.get("hostname")
                          or series.labels.get("host")
                          or topology.get(key, {}).get("hostname", "?")),
