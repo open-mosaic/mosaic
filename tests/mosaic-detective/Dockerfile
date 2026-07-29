@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2025 Delos Data Inc
+# SPDX-License-Identifier: Apache-2.0
 FROM node:22-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \

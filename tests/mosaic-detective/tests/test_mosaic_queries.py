@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2025 Delos Data Inc
+# SPDX-License-Identifier: Apache-2.0
 import pytest
 import mosaic_queries as mq
 import requests
