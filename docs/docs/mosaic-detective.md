@@ -112,7 +112,7 @@ the blood panel measures.
 This is not settled. On one kill-rank run the agent went outside the wrappers to query
 process counts, checking whether the processes had actually exited. It was right, and the
 diagnosis was better for it. Wrappers-only is safe but blind to anything you did not
-anticipate; open query access is more capable and can fabricate. The current position favors
+anticipate; open query access is more capable and can fabricate. The current position prefers
 safety and leaves the boundary open.
 
 ### Detection deterministic, diagnosis agentic
