@@ -110,6 +110,8 @@ nav:
     - Validation: validation.md
     - Test Suites: testsuite.md
     - Fault Playbook: fault-playbook.md
+    - Grafana Alerting: alerting.md
+    - Fault Detective: mosaic-detective.md
     - Release: release.md
   - Community:
     - How to Contribute: contribution.md
