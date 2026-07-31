@@ -83,7 +83,7 @@ def find_anomalies(values, threshold=0.5):
     if len(values) < 4:
         return []
 
-    # Per-step rate of change.
+    
     rates = []
     for i in range(1, len(values)):
         dt = values[i][0] - values[i - 1][0]
@@ -94,9 +94,7 @@ def find_anomalies(values, threshold=0.5):
     for i in range(1, len(rates)):
         prev_rate = rates[i - 1][1]
         curr_rate = rates[i][1]
-        # A shift is significant if it moves by more than `threshold` of the
-        # larger of the two rates. Using the larger side means a drop to zero
-        # registers as a full change rather than dividing by zero.
+    
         scale = max(abs(prev_rate), abs(curr_rate))
         if scale == 0:
             continue

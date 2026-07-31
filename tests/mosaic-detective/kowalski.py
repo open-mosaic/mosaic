@@ -32,7 +32,6 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import discord
 
-# --- config --------------------------------------------------------------
 
 SKILL_DIR = os.path.expanduser("~/.claude/skills/mosaic-detective")
 DISCORD_WEBHOOK = os.environ.get("DISCORD_WEBHOOK", "")
@@ -44,7 +43,7 @@ PREFIX = "kowalski"
 ARMED, NOTIFY, DISARMED = "armed", "notify", "disarmed"
 
 # Starting mode. Set to NOTIFY or DISARMED if you would rather not diagnose
-# automatically from boot -- but note an unattended restart would then leave
+# automatically from boot - but note an unattended restart would then leave
 # autonomous diagnosis silently off.
 MODE = ARMED
 
@@ -57,13 +56,13 @@ MODE_BLURB = {
 _last_fired = 0.0
 _greeted = False
 
-# Guards against two diagnoses overlapping -- a manual summon during an alert
+# Guards against two diagnoses overlapping - a manual summon during an alert
 # run, or two people summoning at once. Both paths are in this process, so one
 # lock covers everything.
 _run_lock = threading.Lock()
 
 
-# --- detective -----------------------------------------------------------
+# detective
 
 def run_detective():
     """Invoke Claude headlessly. Returns the report, an error string, or None
@@ -111,7 +110,7 @@ def chunk(text, size=1900):
     return out
 
 
-# --- alert receiver (daemon thread) --------------------------------------
+# alert receiver
 
 def post_to_discord(text):
     if not DISCORD_WEBHOOK:
@@ -154,9 +153,6 @@ class Handler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             print("  (body was not JSON)")
 
-        # Acknowledge immediately. The diagnosis runs on its own thread below,
-        # because holding this connection open for the ~90s a run takes makes
-        # Grafana time out and retry, producing bursts of duplicate alerts.
         self.send_response(200)
         self.end_headers()
 
@@ -198,7 +194,7 @@ class Handler(BaseHTTPRequestHandler):
     def _diagnose(self, banner):
         """Announce, run the detective, post the report. Runs off the HTTP
         handler thread so the webhook response is not held open."""
-        # Announce first: a diagnosis takes about a minute, and silence for
+        # Announce first, a diagnosis takes about a minute, and silence for
         # that long looks like nothing happened.
         post_to_discord(f"{banner}\nAye aye, Skipper. Diagnosing now — report to follow.")
 
@@ -224,7 +220,7 @@ def start_receiver():
     print(f"Alert receiver listening on port {PORT}")
 
 
-# --- discord bot ---------------------------------------------------------
+# bot
 
 HELP = (
     "**Kowalski commands**\n"
@@ -317,7 +313,7 @@ async def on_message(message):
             await message.channel.send(part)
 
     else:
-        # Deliberately not acknowledged -- a failure should not look like an
+        # Deliberately not acknowledged - a failure should not look like an
         # accepted order.
         await message.channel.send(f"Unknown command `{command}`. Try `Kowalski, help`.")
 

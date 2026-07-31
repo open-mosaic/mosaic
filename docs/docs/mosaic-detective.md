@@ -206,7 +206,7 @@ With your normal workload running and no faults injected, take a five minute ave
 rate(nccl_profiler_collective_bytes_total[5m])
 ```
 
-Divide by 1e6 for MB/s per rank, and put that number in `fault-signatures.md`. That is the
+Divide by one million for MB/s per rank, and put that number in `fault-signatures.md`. That is the
 whole required step.
 
 If you want to go further, the useful additions are healthy GPU clock ranges and a note of

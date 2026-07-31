@@ -2,9 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Blind evaluation harness for the Mosaic Detective skill.
 
-Runs trials: restore the cluster, inject a fault, ask Claude to diagnose it
-blind, and record the answer against ground truth.
-
 Injection is manual because the fault commands need sudo on the cluster.
 The harness pauses and prompts; everything else is automated.
 """
