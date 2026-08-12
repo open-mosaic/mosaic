@@ -11,23 +11,25 @@ SPDX-License-Identifier: Apache-2.0
 # Grafana alerting
 
 Three alert rules cover the fault classes the profiler can see: throughput falling off, one
-GPU running slower than its peers, and the collector going away. They are useful on their
-own for a human-monitored cluster, and they are also what triggers the
+GPU running slower than its peers, and the collector going away. They are useful on their own
+for a human-monitored cluster, and they are also what triggers the
 [Fault Detective](mosaic-detective.md).
 
-The rules are not shipped as importable files. Datasource UIDs, folder names and org IDs
-are specific to one Grafana, and the thresholds depend on your hardware, so an imported copy
-of someone else's alerts is either broken or wrong for your cluster. Build them from what
-follows instead. It takes a few minutes.
+## Treat these as a starting point
 
-## The idea behind them
+The alert carries nothing. Kowalski takes the title for the banner, and the agent investigates
+from scratch regardless of which rule fired. Any rule that reliably says something is wrong
+will drive it, so change the expressions, retune the thresholds, or write your own for faults
+specific to your hardware.
 
-Two of the three compare the cluster against itself rather than against a fixed number.
+What is worth keeping is the shape. Two of the three compare the cluster against itself. A
+threshold like "alert below 60 MB/s" only works on the cluster it was measured on; a ratio
+between a recent window and an older one asks whether things got worse, which you can ask
+anywhere.
 
-A hardcoded threshold like "alert below 60 MB/s" only works on the cluster it was measured
-on. A ratio between a recent window and an older one asks whether things got worse, which is
-a question you can ask anywhere. The same principle runs through the detective's diagnostic
-procedure, at a different resolution.
+They are not shipped as importable files. Datasource UIDs, folder names and org IDs are
+specific to one Grafana, so an imported copy of someone else's alerts is either broken or wrong
+for your cluster. Build them from what follows. It takes a few minutes.
 
 ## Rule 1: throughput degradation
 
@@ -39,9 +41,9 @@ sum(rate(nccl_profiler_collective_bytes_total[20m] offset 3m))
 
 Condition: below `0.85`. Pending period: `10s`.
 
-Recent throughput over the last 30 seconds, divided by a 20 minute baseline taken from
-before the fault would have started. The `offset 3m` matters. Without it a slow degradation
-drags the baseline down with it and the ratio never moves.
+Recent throughput over the last 30 seconds, divided by a 20 minute baseline taken from before
+the fault would have started. The `offset 3m` matters. Without it a slow degradation drags the
+baseline down with it and the ratio never moves.
 
 This is the rule that catches network faults, and it is the one most worth tuning. A healthy
 cluster is not flat: collective batching produces regular oscillation, and on the reference
@@ -56,15 +58,14 @@ max(DCGM_FI_DEV_SM_CLOCK) / min(DCGM_FI_DEV_SM_CLOCK)
 
 Condition: above `1.1`.
 
-The fastest GPU divided by the slowest. Under a synchronous collective every rank should
-clock similarly, so a persistent spread means one GPU is throttling or clamped.
+The fastest GPU divided by the slowest. Under a synchronous collective every rank should clock
+similarly, so a persistent spread means one is throttling or clamped.
 
-This comes from DCGM rather than the profiler, and that is the point. On a network-bound
-cluster a clock clamp barely moves throughput at all, so the profiler cannot see it. The
-rule needs a source outside the collective.
+This comes from DCGM rather than the profiler, and that is the point: on a network-bound
+cluster a clock clamp barely moves throughput, so the profiler cannot see it.
 
-It has one failure mode worth guarding. When no workload is running the clocks idle at
-different rates and the ratio spikes, so the rule fires on startup and shutdown. Add a floor:
+One failure mode worth guarding. With no workload running the clocks idle at different rates
+and the ratio spikes, so the rule fires on every startup and shutdown. Add a floor:
 
 ```promql
 (max(DCGM_FI_DEV_SM_CLOCK) / min(DCGM_FI_DEV_SM_CLOCK))
@@ -82,87 +83,58 @@ up{job="otel-collector"}
 
 Condition: below `1`.
 
-The simplest of the three and the one that prevents the worst misdiagnosis. If the collector
-dies, every profiler metric stops, which looks exactly like the cluster dying. Without this
-rule you cannot tell the difference between a broken cluster and a broken view of a healthy
-one.
+The simplest of the three, and it prevents the worst misdiagnosis. If the collector dies every
+profiler metric stops, which looks exactly like the cluster dying. Without this rule you cannot
+tell a broken cluster from a broken view of a healthy one.
 
 A pending period of `30s` avoids firing on a scrape blip.
 
 ## Choosing your thresholds
 
-Do not copy the numbers above without checking them. They came from a two node, four GPU
-cluster on 1 GbE, and they are starting points rather than recommendations.
+The numbers above came from a two node, four GPU cluster on 1 GbE. Run your workload with
+nothing injected for half an hour and watch what healthy does:
 
-Run your normal workload with nothing injected for at least half an hour, then look at what
-healthy actually does:
+- Throughput: watch the ratio expression itself. It should sit near 1.0. Set the threshold
+  below the deepest healthy dip, with room to spare.
+- Clocks: watch the max/min spread under load and set the threshold above it.
+- Collector: nothing to calibrate. It is up or it is not.
 
-- For throughput, watch the ratio expression itself over that window. It should sit near
-  1.0. Note how far it dips during normal operation and set the threshold below the
-  deepest healthy dip, with room to spare.
-- For clocks, watch the max/min ratio. Note the spread under load and set the threshold
-  above it.
-- For the collector, no calibration needed. It is up or it is not.
-
-The variance is the thing you are looking for, not the average. A single snapshot tells you
-nothing about how far healthy wanders.
+You are looking for the variance, not the average. A single snapshot tells you nothing about
+how far healthy wanders.
 
 ## Evaluation and delivery
 
-Put all three in one evaluation group. The reference setup uses a group named `mosaic-10s`
-evaluating every `10s`, which is fast enough that detection latency is dominated by the
-metric scrape interval rather than by Grafana.
+Put all three in one group. The reference setup uses `mosaic-10s` evaluating every `10s`, fast
+enough that detection latency comes from the scrape interval rather than from Grafana.
 
-Each rule routes straight to its contact point through the rule's own notification settings,
-so no notification policy tree is needed:
+Each rule routes straight to its contact point through its own notification settings, so you do
+not need a notification policy tree:
 
 | Setting | Value | Why |
 |---|---|---|
-| Group wait | `10s` | How long to wait before sending the first notification. The default is much longer |
+| Group wait | `10s` | How long before the first notification is sent. The default is much longer |
 | Group interval | `3m` | Minimum gap between notifications for the same group |
 
-Group wait is the one that surprises people. Left at the default, an alert that has already
-fired takes minutes to be delivered, which looks like the alert not working.
+Group wait is the one that catches people. Left at the default, an alert that has already fired
+takes minutes to arrive, which looks like the alert not working.
 
-Group interval is doing the same job as the detective's own cooldown, which also defaults to
-three minutes. If you are sending to a human, tune this one. If you are sending to the
-detective, either mechanism suppresses the repeats and you only need to think about one of
-them.
+Group interval does the same job as the detective's own cooldown, which also defaults to three
+minutes. Sending to a human, tune this one. Sending to the detective, either suppresses the
+repeats and you only need to think about one.
 
-## Sending to a receiver
-
-Create a webhook contact point pointing at wherever the receiver listens. If the receiver
-runs as a container on the same Docker network as Grafana, address it by container name
-rather than by IP, so the configuration is not tied to one machine's networking.
-
-Use the **Test** button once it is set up. That verifies the network path without waiting
-for a real fault, and it is the fastest way to find out that Grafana cannot reach the
-receiver.
+The contact point is covered in [Fault Detective](mosaic-detective.md). Address the receiver by
+container name, not by IP, and use the **Test** button.
 
 ## Two things to know
 
-**A workload that stops entirely may not alert.** If the process exits, the throughput
-numerator and denominator both fall to zero, and the ratio becomes undefined rather than
-low. With `noDataState` set to `NoData` that stays quiet. Test this case on your own setup
-and decide whether you want a separate rule for it.
+**A workload that stops entirely may not alert.** If the process exits, numerator and
+denominator both fall to zero and the ratio is undefined rather than low. With `noDataState` set
+to `NoData` that stays quiet. Test it on your own setup and decide whether you want a separate
+rule.
 
-**File-provisioned rules are read-only in the UI.** If you provision from a file rather than
-building the rules in Grafana, you cannot then tune the thresholds through the interface,
-which makes calibration awkward. Build them in the UI first, tune them, then export if you
-want a backup.
+**File-provisioned rules are read-only in the UI.** You cannot tune a threshold you provisioned
+from a file, which makes calibration awkward. Build them in the UI, tune them, then export.
 
-## Backing up your configuration
-
-Grafana keeps alert definitions in its own database, so they disappear with the volume.
-Once your rules are tuned, export them and store the result somewhere outside the cluster:
-
-```bash
-curl -s -u <user>:<pass> \
-  "http://<grafana>/api/v1/provisioning/alert-rules/export?format=yaml"
-
-curl -s -u <user>:<pass> \
-  "http://<grafana>/api/v1/provisioning/contact-points/export?format=yaml"
-```
-
-If you later change a rule through the UI, re-export it. An old export that no longer
-matches what is running is worse than none, because you will trust it.
+Alert definitions live in Grafana's database and go with the volume, so keep that export outside
+the cluster and redo it after any change. A stale export is worse than none, because you will
+trust it.

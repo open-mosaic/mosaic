@@ -134,3 +134,9 @@ url
 webhook
 websocket
 yaml
+intents
+oauth
+oauth2
+webhooks
+misdiagnosis
+provisioned
