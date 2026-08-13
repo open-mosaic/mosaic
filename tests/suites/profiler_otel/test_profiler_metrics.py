@@ -244,7 +244,7 @@ class TestNCCLProfilerTelemetry:
 
         baseline, settled = wait_for_metrics_quiesced(prometheus_url, metrics)
         if not settled:
-            pytest.skip(
+            pytest.fail(
                 f"NCCL metric totals still moving after {QUIESCE_TIMEOUT}s; cannot "
                 "establish an idle baseline"
             )
