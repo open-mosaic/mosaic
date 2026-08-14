@@ -6,7 +6,6 @@ Tests for vLLM inference with NCCL Profiler OTEL.
 These tests validate that the NCCL profiler is exporting telemetry correctly.
 """
 
-import math
 import time
 
 import pytest
@@ -14,7 +13,14 @@ import requests
 from production_test_framework.vllm import InferenceResult
 from production_test_framework.workload.workload import WorkloadStatus
 
-from profiler_otel.conftest import expected_nccl_profiler_metrics
+from profiler_otel.conftest import (
+    NCCL_PROFILER_METRICS_EXPECTED_PROMPT_WORKLOAD,
+    QUIESCE_TIMEOUT,
+    expected_nccl_profiler_metrics,
+    metric_increased,
+    metric_total,
+    wait_for_metrics_quiesced,
+)
 
 # =============================================================================
 # NCCL Profiler Telemetry Tests
@@ -27,6 +33,19 @@ WORKLOAD_TIMEOUT = 600  # 10 minutes
 # timeout is ~4x that budget.
 METRICS_AVAILABLE_TIMEOUT = 60  # seconds
 METRICS_POLL_INTERVAL = 2  # seconds
+
+# How long the idle guard watches for movement. Matches the budget a real workload gets
+# for its metrics to land, so a leak has the same opportunity to show up there as here.
+IDLE_OBSERVATION_PERIOD = METRICS_AVAILABLE_TIMEOUT  # seconds
+
+
+def _format_value(value: float | None) -> str:
+    """Render a metric total for logs, distinguishing an absent series from a zero one."""
+    return "absent" if value is None else f"{value:.6g}"
+
+
+def _format_totals(totals: dict[str, float | None]) -> str:
+    return ", ".join(f"{name}={_format_value(value)}" for name, value in totals.items())
 
 
 @pytest.mark.profiler_otel
@@ -83,9 +102,13 @@ class TestNCCLProfilerTelemetry:
 
     @pytest.mark.parametrize(
         "workload",
-        ["prompt_workload", "inferencex_workload"],
+        [
+            "prompt_workload",
+            "inferencex_workload",
+            "nccl_workload",
+        ],
         indirect=True,
-        ids=["prompt_workload", "inferencex_workload"],
+        ids=["prompt_workload", "inferencex_workload", "nccl_workload"],
     )
     def test_nccl_metrics_exported_after_inference(
         self,
@@ -95,11 +118,24 @@ class TestNCCLProfilerTelemetry:
         """
         :title: Telemetry - NCCL metrics exported after inference
         :suite: profiler_otel
-        :description: Verify NCCL profiler metrics are exported to Prometheus after
-            running vLLM inference. Triggers NCCL operations via inference, then
-            queries Prometheus for the workload-specific expected metric set from
-            conftest (NCCL_PROFILER_METRICS_EXPECTED_*).
+        :description: Verify NCCL profiler metrics are exported to Prometheus. 
+            Waits for the metric totals to settle, snapshots them.
+            Runs the workload, then requires each expected metric from conftest
+            (NCCL_PROFILER_METRICS_EXPECTED_*) to increase above that baseline.
         """
+        nccl_profiler_metrics = expected_nccl_profiler_metrics(workload)
+
+        # Settle first, then snapshot. The collector republishes every series it has seen
+        # on each scrape, so "a sample exists" is true forever after the first NCCL op and
+        # proves nothing about this workload. Only a rise above a settled baseline does.
+        print("\n  Waiting for NCCL metric totals to settle before taking a baseline...")
+        baseline, settled = wait_for_metrics_quiesced(prometheus_url, nccl_profiler_metrics)
+        if not settled:
+            print(
+                f"  WARNING: totals still moving after {QUIESCE_TIMEOUT}s; baseline may "
+                "include samples from a previous workload"
+            )
+        print(f"  Baseline ({len(baseline)} metrics): {_format_totals(baseline)}")
 
         workload.start()
 
@@ -128,91 +164,109 @@ class TestNCCLProfilerTelemetry:
             and workload_result.status == WorkloadStatus.COMPLETED
         ), "Inference must succeed before checking metrics"
 
-        # Metrics take time to be scraped into Prometheus after the workload
-        # finishes (empirically ~10s). Rather than sleeping a fixed amount, poll
-        # the expected metric set and record each metric as soon as it appears,
-        # returning immediately once all are present or once the timeout elapses.
-        # We'll move the end time window for each iteration of the poll to make sure
-        # we don't accidentally exclude any late arriving metrics.
-        nccl_profiler_metrics = expected_nccl_profiler_metrics(workload)
-
-        def query_prometheus(promql: str) -> list:
-            """Run an instant query and return its result series (empty on any failure)."""
-            try:
-                response = requests.get(
-                    f"{prometheus_url}/api/v1/query",
-                    params={"query": promql},
-                    timeout=10,
-                )
-            except requests.exceptions.RequestException:
-                return []
-            if response.status_code != 200:
-                return []
-            data = response.json()
-            if data.get("status") != "success":
-                return []
-            return data.get("data", {}).get("result", [])
-
-        def metric_has_data(metric_name: str) -> bool:
-            """True when Prometheus holds a sample for *metric_name* timestamped after the workload started."""
-            window_s = max(1, math.ceil(time.time() - workload_result.start_time) + 1)
-            return bool(
-                query_prometheus(f"count_over_time({metric_name}[{window_s}s])")
-            )
-
+        # Metrics take time to reach Prometheus after the workload finishes (empirically
+        # ~10s). Rather than sleeping a fixed amount, poll each expected metric and record
+        # it as soon as its total rises above the baseline, returning as soon as they all
+        # have or the timeout elapses.
         print(
             f"  Workload window: start={workload_result.start_time:.3f} "
             f"end={workload_result.end_time:.3f}"
         )
 
-        found_metrics: list[str] = []
+        increased_metrics: dict[str, float] = {}
         deadline = time.monotonic() + METRICS_AVAILABLE_TIMEOUT
         while True:
-            # Only re-query metrics we have not seen yet; record each as it arrives.
+            # Only re-query metrics that have not risen yet; record each as it does.
             for metric_name in nccl_profiler_metrics:
-                if metric_name not in found_metrics and metric_has_data(metric_name):
-                    found_metrics.append(metric_name)
+                if metric_name in increased_metrics:
+                    continue
+                current = metric_total(prometheus_url, metric_name)
+                if metric_increased(baseline[metric_name], current):
+                    increased_metrics[metric_name] = current
                     print(
-                        f"    Found: {metric_name} "
+                        f"    Increased: {metric_name} "
+                        f"{_format_value(baseline[metric_name])} -> {_format_value(current)} "
                         f"(+{time.time() - workload_result.end_time:.1f}s after workload end)"
                     )
 
             if (
-                len(found_metrics) == len(nccl_profiler_metrics)
+                len(increased_metrics) == len(nccl_profiler_metrics)
                 or time.monotonic() >= deadline
             ):
                 break
             time.sleep(METRICS_POLL_INTERVAL)
 
-        missing_metrics = [m for m in nccl_profiler_metrics if m not in found_metrics]
+        missing_metrics = [m for m in nccl_profiler_metrics if m not in increased_metrics]
 
         print(
-            f"\n  Found {len(found_metrics)}/{len(nccl_profiler_metrics)} NCCL profiler metrics"
+            f"\n  {len(increased_metrics)}/{len(nccl_profiler_metrics)} NCCL profiler "
+            "metrics increased during the workload"
         )
         if missing_metrics:
-            print(f"  Missing metrics: {missing_metrics}")
-            # Re-query each missing metric with no time bound. Whether the series
-            # exists, and where its newest sample sits relative to the workload,
-            # separates the failure modes for whoever reads the CI log:
-            #   no series at all    -> nothing was exported; check vLLM, the OTLP
-            #                          endpoint and the collector
-            #   newest > end_time   -> ingest lag; raise METRICS_AVAILABLE_TIMEOUT
-            #   newest < start_time -> the series is stale; the profiler produced
-            #                          nothing for this workload
-            print("  Missing metrics diagnostics:")
+            print(f"  Metrics that did not increase: {missing_metrics}")
+            # Separate the failure modes. Because the baseline was taken after the 
+            # totals settled, a flat total means the profiler genuinely produced nothing 
+            # for this workload. It is no longer possible to confuse that with "the series 
+            # is missing" or "ingest is slow".
+            #   no series at all -> nothing was ever exported; check the profiler plugin,
+            #                       the OTLP endpoint and the collector
+            #   total unchanged  -> the exporter is alive and being scraped, but this 
+            #                       workload drove no NCCL ops through it
+            print("  Diagnostics:")
             for metric_name in missing_metrics:
-                series = query_prometheus(metric_name)
-                if not series:
+                current = metric_total(prometheus_url, metric_name)
+                if current is None:
                     print(f"    {metric_name}: no series in Prometheus")
                     continue
-                newest = max(float(s["value"][0]) for s in series)
                 print(
-                    f"    {metric_name}: {len(series)} series, newest sample "
-                    f"{newest - workload_result.start_time:+.1f}s vs workload start timestamp of {workload_result.start_time:+.1f}, "
-                    f"{newest - workload_result.end_time:+.1f}s vs workload end timestamp of {workload_result.end_time:+.1f}"
+                    f"    {metric_name}: baseline={_format_value(baseline[metric_name])} "
+                    f"current={_format_value(current)} (unchanged after "
+                    f"{METRICS_AVAILABLE_TIMEOUT}s)"
                 )
 
         assert not missing_metrics, (
-            f"Expected {len(nccl_profiler_metrics)} metrics, found {len(found_metrics)} "
-            f"within {METRICS_AVAILABLE_TIMEOUT}s. Missing: {missing_metrics}"
+            f"Expected {len(nccl_profiler_metrics)} metrics to increase, "
+            f"{len(increased_metrics)} did within {METRICS_AVAILABLE_TIMEOUT}s. "
+            f"Did not increase: {missing_metrics}"
+        )
+
+    def test_metrics_do_not_increase_without_a_workload(self, prometheus_url: str):
+        """
+        :title: Telemetry - NCCL metrics do not increase while idle
+        :suite: profiler_otel
+        :description: Falsifiability guard for the metric assertions. The collector
+            republishes every series it has seen on each scrape, so any check based on a
+            sample being present passes even when nothing ran. This test runs no workload
+            and requires the totals to stay flat -- if it fails, the assertions in this
+            file have stopped distinguishing real NCCL activity from a live exporter.
+        """
+        metrics = NCCL_PROFILER_METRICS_EXPECTED_PROMPT_WORKLOAD
+
+        baseline, settled = wait_for_metrics_quiesced(prometheus_url, metrics)
+        if not settled:
+            pytest.fail(
+                f"NCCL metric totals still moving after {QUIESCE_TIMEOUT}s; cannot "
+                "establish an idle baseline"
+            )
+
+        time.sleep(IDLE_OBSERVATION_PERIOD)
+
+        increased: dict[str, tuple[float | None, float | None]] = {}
+        for name in metrics:
+            current = metric_total(prometheus_url, name)
+            if metric_increased(baseline[name], current):
+                increased[name] = (baseline[name], current)
+
+        print(
+            f"\n  Idled {IDLE_OBSERVATION_PERIOD}s after the totals settled; "
+            f"{len(increased)}/{len(metrics)} metrics moved"
+        )
+        assert not increased, (
+            "NCCL metric totals rose with no workload running: "
+            + ", ".join(
+                f"{name} {_format_value(before)} -> {_format_value(after)}"
+                for name, (before, after) in increased.items()
+            )
+            + ". Either something else is driving NCCL ops, or the quiesce period is too "
+            "short and the assertions in this file cannot tell activity from a live exporter."
         )
