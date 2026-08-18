@@ -224,42 +224,42 @@ This section lists the actual metric names, types, units, and source files for e
 
 **Source:** `profiler/telemetry_runtime.cc` (names/units/descriptions), `profiler/telemetry_export.cc` (labels)
 
-**Labels:** communicator, operation, rank, local_rank, hostname, gpu_pci_bus_id, gpu_uuid, comm_type
+**Labels:** `communicator`, `operation`, `rank`, `local_rank`, `hostname`, `gpu_pci_bus_id`, `gpu_uuid`, `comm_type`
 
 | Metric | Type | Unit | Meaning |
 |---|---|---|---|
 | `nccl_profiler_collective_bytes` | Counter | bytes | Total bytes transferred in collective operations |
 | `nccl_profiler_collective_time` | Histogram | µs | Average time per collective operation |
 | `nccl_profiler_collective_count` | Histogram | count | Number of collective operations |
-| `nccl_profiler_collective_num_transfers` | Histogram (cond.) | count | Average number of transfers per collective |
-| `nccl_profiler_collective_transfer_size` | Histogram (cond.) | bytes | Average transfer size for collective |
-| `nccl_profiler_collective_transfer_time` | Histogram (cond.) | µs | Average transfer time for collective |
+| `nccl_profiler_collective_num_transfers` | Histogram (conditional) | count | Average number of transfers per collective |
+| `nccl_profiler_collective_transfer_size` | Histogram (conditional) | bytes | Average transfer size for collective |
+| `nccl_profiler_collective_transfer_time` | Histogram (conditional) | µs | Average transfer time for collective |
 
 ## P2P metrics
 
 **Source:** `profiler/telemetry_runtime.cc`, `profiler/telemetry_export.cc`
 
-**Labels:** communicator, operation, rank, local_rank, hostname, gpu_pci_bus_id, gpu_uuid, comm_type
+**Labels:** `communicator`, `operation`, `rank`, `local_rank`, `hostname`, `gpu_pci_bus_id`, `gpu_uuid`, `comm_type`
 
 | Metric | Type | Unit | Meaning |
 |---|---|---|---|
 | `nccl_profiler_p2p_bytes` | Histogram | bytes | Average bytes per P2P operation |
 | `nccl_profiler_p2p_time` | Histogram | µs | Average time per P2P operation |
-| `nccl_profiler_p2p_num_transfers` | Histogram (cond.) | count | Average number of transfers per P2P |
-| `nccl_profiler_p2p_transfer_size` | Histogram (cond.) | bytes | Average transfer size for P2P |
-| `nccl_profiler_p2p_transfer_time` | Histogram (cond.) | µs | Average transfer time for P2P |
+| `nccl_profiler_p2p_num_transfers` | Histogram (conditional) | count | Average number of transfers per P2P |
+| `nccl_profiler_p2p_transfer_size` | Histogram (conditional) | bytes | Average transfer size for P2P |
+| `nccl_profiler_p2p_transfer_time` | Histogram (conditional) | µs | Average transfer time for P2P |
 
 ## Rank to rank (RTR) metrics
 
 **Source:** `profiler/telemetry_runtime.cc` + `profiler/telemetry_export.cc`
 
-**Labels:** communicator, source_rank, dest_rank, local_rank, hostname, gpu_pci_bus_id, gpu_uuid, comm_type
+**Labels:** `communicator`, `source_rank`, `dest_rank`, `local_rank`, `hostname`, `gpu_pci_bus_id`, `gpu_uuid`, `comm_type`
 
 | Metric | Type | Unit | Meaning |
 |---|---|---|---|
 | `nccl_profiler_rank_bytes` | Counter | bytes | Bytes sent from RTR |
-| `nccl_profiler_rank_latency` | Histogram (cond.) | µs | Latency from RTR (from linReg) |
-| `nccl_profiler_rank_rate` | Histogram (cond.) | MB/s | Transfer rate RTR (bandwidth from active transfer time) |
+| `nccl_profiler_rank_latency` | Histogram (conditional) | µs | Latency from RTR (from linear regression) |
+| `nccl_profiler_rank_rate` | Histogram (conditional) | MB/s | Transfer rate RTR (bandwidth from active transfer time) |
 
 > **`rank_latency` and `rank_rate` are derived, not measured.** Both come from a per-size linear regression over transfer samples (`linear_regression.{h,cc}`): the intercept is latency, the slope is rate, computed in AVG mode (all points) or MIN mode (minimum time per size). Internally the regression keys carry the communicator hash prefix (`Comm<hash>_RankXToRankY`) so multiple communicators — e.g. under pipeline parallelism — don't collide; in Prometheus that same separation is carried by the `communicator` label.
 
@@ -267,13 +267,13 @@ This section lists the actual metric names, types, units, and source files for e
 
 **Source:** `profiler/telemetry_runtime.cc` + `profiler/telemetry_export.cc`
 
-**Labels:** communicator, source_rank, dest_rank, channel, local_rank, hostname, gpu_pci_bus_id, gpu_uuid, comm_type
+**Labels:** `communicator`, `source_rank`, `dest_rank`, `channel`, `local_rank`, `hostname`, `gpu_pci_bus_id`, `gpu_uuid`, `comm_type`
 
 | Metric | Type | Unit | Meaning |
 |---|---|---|---|
 | `nccl_profiler_transfer_size` | Histogram | bytes | Average transfer size per channel |
 | `nccl_profiler_transfer_time` | Histogram | µs | Average transfer time per channel |
-| `nccl_profiler_transfer_latency` | Histogram (cond.) | µs | Transfer latency per channel (from linReg) |
+| `nccl_profiler_transfer_latency` | Histogram (conditional) | µs | Transfer latency per channel (from linear regression) |
 
 ## Recording rules
 
@@ -282,9 +282,9 @@ This section lists the actual metric names, types, units, and source files for e
 | Metric | Labels | Unit | Meaning |
 |---|---|---|---|
 | `mosaic_gpu_rank_mapping` | communicator, rank, hostname, gpu_pci_bus_id, gpu_uuid | | Maps each rank to its host/GPU (join key) |
-| `mosaic_gpu_pair_bw` | source/dest hostname + pci_bus_id | MB/s | Bandwidth per GPU pair (from `rank_rate`) |
-| `mosaic_gpu_pair_latency` | source/dest hostname + pci_bus_id | µs | Latency per GPU pair (from `rank_latency`) |
-| `mosaic_gpu_transfer_time` | source/dest hostname + pci_bus_id | µs | Transfer time per GPU pair (from `transfer_time`) |
+| `mosaic_gpu_pair_bw` | source/destination hostname + pci_bus_id | MB/s | Bandwidth per GPU pair (from `rank_rate`) |
+| `mosaic_gpu_pair_latency` | source/destination hostname + pci_bus_id | µs | Latency per GPU pair (from `rank_latency`) |
+| `mosaic_gpu_transfer_time` | source/destination hostname + pci_bus_id | µs | Transfer time per GPU pair (from `transfer_time`) |
 | `mosaic_cpu_util` | cpu, host | % | Per-CPU utilisation (from `node_cpu_seconds_total`) |
 
 ## Pipeline & health metrics
@@ -300,9 +300,9 @@ This section lists the actual metric names, types, units, and source files for e
 
 Host- and GPU-level context comes from third-party exporters (node-exporter, DCGM-exporter, process-exporter), which expose far more metrics than any dashboard surfaces. There are too many to enumerate usefully here, so refer to the upstream docs, which stay current with the exporter versions we run:
 
-- **DCGM-exporter** — default metric set (each DCGM field ID with its Prometheus type and help text): <https://github.com/NVIDIA/dcgm-exporter/blob/main/etc/default-counters.csv>
-- **node-exporter** — collectors and the metrics each one emits: <https://github.com/prometheus/node_exporter>
-- **process-exporter** (`namedprocess_*`): <https://github.com/ncabatoff/process-exporter>
+- **DCGM-exporter** — default metric set (each DCGM field ID with its Prometheus type and help text): [DCGM exporter](https://github.com/NVIDIA/dcgm-exporter/blob/main/etc/default-counters.csv)
+- **node-exporter** — collectors and the metrics each one emits: [Node Exporter](https://github.com/prometheus/node_exporter)
+- **process-exporter** (`namedprocess_*`): [Process Exporter](https://github.com/ncabatoff/process-exporter)
 
 ## Future improvements
 
