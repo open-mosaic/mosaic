@@ -1829,7 +1829,7 @@ SPDX-License-Identifier: Apache-2.0
 </blockquote>
 <h3 id="collective-metrics">Collective metrics<a class="headerlink" href="#collective-metrics" title="Permanent link">#</a></h3>
 <p><strong>Source:</strong> <code>profiler/telemetry_runtime.cc</code> (names/units/descriptions), <code>profiler/telemetry_export.cc</code> (labels)</p>
-<p><strong>Labels:</strong> communicator, operation, rank, local_rank, hostname, gpu_pci_bus_id, gpu_uuid, comm_type</p>
+<p><strong>Labels:</strong> <code>communicator</code>, <code>operation</code>, <code>rank</code>, <code>local_rank</code>, <code>hostname</code>, <code>gpu_pci_bus_id</code>, <code>gpu_uuid</code>, <code>comm_type</code></p>
 <table>
 <thead>
 <tr>
@@ -1860,19 +1860,19 @@ SPDX-License-Identifier: Apache-2.0
 </tr>
 <tr>
 <td><code>nccl_profiler_collective_num_transfers</code></td>
-<td>Histogram (cond.)</td>
+<td>Histogram (conditional)</td>
 <td>count</td>
 <td>Average number of transfers per collective</td>
 </tr>
 <tr>
 <td><code>nccl_profiler_collective_transfer_size</code></td>
-<td>Histogram (cond.)</td>
+<td>Histogram (conditional)</td>
 <td>bytes</td>
 <td>Average transfer size for collective</td>
 </tr>
 <tr>
 <td><code>nccl_profiler_collective_transfer_time</code></td>
-<td>Histogram (cond.)</td>
+<td>Histogram (conditional)</td>
 <td>µs</td>
 <td>Average transfer time for collective</td>
 </tr>
@@ -1880,7 +1880,7 @@ SPDX-License-Identifier: Apache-2.0
 </table>
 <h3 id="p2p-metrics">P2P metrics<a class="headerlink" href="#p2p-metrics" title="Permanent link">#</a></h3>
 <p><strong>Source:</strong> <code>profiler/telemetry_runtime.cc</code>, <code>profiler/telemetry_export.cc</code></p>
-<p><strong>Labels:</strong> communicator, operation, rank, local_rank, hostname, gpu_pci_bus_id, gpu_uuid, comm_type</p>
+<p><strong>Labels:</strong> <code>communicator</code>, <code>operation</code>, <code>rank</code>, <code>local_rank</code>, <code>hostname</code>, <code>gpu_pci_bus_id</code>, <code>gpu_uuid</code>, <code>comm_type</code></p>
 <table>
 <thead>
 <tr>
@@ -1905,19 +1905,19 @@ SPDX-License-Identifier: Apache-2.0
 </tr>
 <tr>
 <td><code>nccl_profiler_p2p_num_transfers</code></td>
-<td>Histogram (cond.)</td>
+<td>Histogram (conditional)</td>
 <td>count</td>
 <td>Average number of transfers per P2P</td>
 </tr>
 <tr>
 <td><code>nccl_profiler_p2p_transfer_size</code></td>
-<td>Histogram (cond.)</td>
+<td>Histogram (conditional)</td>
 <td>bytes</td>
 <td>Average transfer size for P2P</td>
 </tr>
 <tr>
 <td><code>nccl_profiler_p2p_transfer_time</code></td>
-<td>Histogram (cond.)</td>
+<td>Histogram (conditional)</td>
 <td>µs</td>
 <td>Average transfer time for P2P</td>
 </tr>
@@ -1925,7 +1925,7 @@ SPDX-License-Identifier: Apache-2.0
 </table>
 <h3 id="rank-to-rank-rtr-metrics">Rank to rank (RTR) metrics<a class="headerlink" href="#rank-to-rank-rtr-metrics" title="Permanent link">#</a></h3>
 <p><strong>Source:</strong> <code>profiler/telemetry_runtime.cc</code> + <code>profiler/telemetry_export.cc</code></p>
-<p><strong>Labels:</strong> communicator, source_rank, dest_rank, local_rank, hostname, gpu_pci_bus_id, gpu_uuid, comm_type</p>
+<p><strong>Labels:</strong> <code>communicator</code>, <code>source_rank</code>, <code>dest_rank</code>, <code>local_rank</code>, <code>hostname</code>, <code>gpu_pci_bus_id</code>, <code>gpu_uuid</code>, <code>comm_type</code></p>
 <table>
 <thead>
 <tr>
@@ -1944,13 +1944,13 @@ SPDX-License-Identifier: Apache-2.0
 </tr>
 <tr>
 <td><code>nccl_profiler_rank_latency</code></td>
-<td>Histogram (cond.)</td>
+<td>Histogram (conditional)</td>
 <td>µs</td>
-<td>Latency from RTR (from linReg)</td>
+<td>Latency from RTR (from linear regression)</td>
 </tr>
 <tr>
 <td><code>nccl_profiler_rank_rate</code></td>
-<td>Histogram (cond.)</td>
+<td>Histogram (conditional)</td>
 <td>MB/s</td>
 <td>Transfer rate RTR (bandwidth from active transfer time)</td>
 </tr>
@@ -1961,7 +1961,7 @@ SPDX-License-Identifier: Apache-2.0
 </blockquote>
 <h3 id="per-channel-transfer-metrics">Per-channel transfer metrics<a class="headerlink" href="#per-channel-transfer-metrics" title="Permanent link">#</a></h3>
 <p><strong>Source:</strong> <code>profiler/telemetry_runtime.cc</code> + <code>profiler/telemetry_export.cc</code></p>
-<p><strong>Labels:</strong> communicator, source_rank, dest_rank, channel, local_rank, hostname, gpu_pci_bus_id, gpu_uuid, comm_type</p>
+<p><strong>Labels:</strong> <code>communicator</code>, <code>source_rank</code>, <code>dest_rank</code>, <code>channel</code>, <code>local_rank</code>, <code>hostname</code>, <code>gpu_pci_bus_id</code>, <code>gpu_uuid</code>, <code>comm_type</code></p>
 <table>
 <thead>
 <tr>
@@ -1986,9 +1986,9 @@ SPDX-License-Identifier: Apache-2.0
 </tr>
 <tr>
 <td><code>nccl_profiler_transfer_latency</code></td>
-<td>Histogram (cond.)</td>
+<td>Histogram (conditional)</td>
 <td>µs</td>
-<td>Transfer latency per channel (from linReg)</td>
+<td>Transfer latency per channel (from linear regression)</td>
 </tr>
 </tbody>
 </table>
@@ -2012,19 +2012,19 @@ SPDX-License-Identifier: Apache-2.0
 </tr>
 <tr>
 <td><code>mosaic_gpu_pair_bw</code></td>
-<td>source/dest hostname + pci_bus_id</td>
+<td>source/destination hostname + pci_bus_id</td>
 <td>MB/s</td>
 <td>Bandwidth per GPU pair (from <code>rank_rate</code>)</td>
 </tr>
 <tr>
 <td><code>mosaic_gpu_pair_latency</code></td>
-<td>source/dest hostname + pci_bus_id</td>
+<td>source/destination hostname + pci_bus_id</td>
 <td>µs</td>
 <td>Latency per GPU pair (from <code>rank_latency</code>)</td>
 </tr>
 <tr>
 <td><code>mosaic_gpu_transfer_time</code></td>
-<td>source/dest hostname + pci_bus_id</td>
+<td>source/destination hostname + pci_bus_id</td>
 <td>µs</td>
 <td>Transfer time per GPU pair (from <code>transfer_time</code>)</td>
 </tr>
@@ -2062,9 +2062,9 @@ SPDX-License-Identifier: Apache-2.0
 <h3 id="context-metrics">Context metrics<a class="headerlink" href="#context-metrics" title="Permanent link">#</a></h3>
 <p>Host- and GPU-level context comes from third-party exporters (node-exporter, DCGM-exporter, process-exporter), which expose far more metrics than any dashboard surfaces. There are too many to enumerate usefully here, so refer to the upstream docs, which stay current with the exporter versions we run:</p>
 <ul>
-<li><strong>DCGM-exporter</strong> — default metric set (each DCGM field ID with its Prometheus type and help text): <a href="https://github.com/NVIDIA/dcgm-exporter/blob/main/etc/default-counters.csv">https://github.com/NVIDIA/dcgm-exporter/blob/main/etc/default-counters.csv</a></li>
-<li><strong>node-exporter</strong> — collectors and the metrics each one emits: <a href="https://github.com/prometheus/node_exporter">https://github.com/prometheus/node_exporter</a></li>
-<li><strong>process-exporter</strong> (<code>namedprocess_*</code>): <a href="https://github.com/ncabatoff/process-exporter">https://github.com/ncabatoff/process-exporter</a></li>
+<li><strong>DCGM-exporter</strong> — default metric set (each DCGM field ID with its Prometheus type and help text): <a href="https://github.com/NVIDIA/dcgm-exporter/blob/main/etc/default-counters.csv">DCGM exporter</a></li>
+<li><strong>node-exporter</strong> — collectors and the metrics each one emits: <a href="https://github.com/prometheus/node_exporter">Node Exporter</a></li>
+<li><strong>process-exporter</strong> (<code>namedprocess_*</code>): <a href="https://github.com/ncabatoff/process-exporter">Process Exporter</a></li>
 </ul>
 <h3 id="future-improvements">Future improvements<a class="headerlink" href="#future-improvements" title="Permanent link">#</a></h3>
 <p>The metric tables above are maintained by hand and can drift from what the exporters actually expose. They could instead be generated from Prometheus's own metric metadata to keep the inventory in sync. Tracked in <a href="https://github.com/open-mosaic/mosaic/issues/52">#52</a>.</p>

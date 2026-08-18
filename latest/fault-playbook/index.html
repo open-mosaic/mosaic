@@ -856,7 +856,7 @@
   <a href="#the-safety-timer-deadman" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The safety timer ("deadman")
+        The safety timer (deadman)
       
     </span>
   </a>
@@ -1316,7 +1316,7 @@
   <a href="#the-safety-timer-deadman" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The safety timer ("deadman")
+        The safety timer (deadman)
       
     </span>
   </a>
@@ -1541,7 +1541,7 @@ only receive commands. You need:</p>
 <ul>
 <li><strong>SSH key auth</strong> from the head node to every node in <code>NODES</code>, including the
   head node to itself (the harness treats all nodes uniformly).</li>
-<li><strong>sudo</strong> on every node for <code>tc</code> and <code>nvidia-smi</code>. Interactive sudo is enough:
+<li><strong><code>sudo</code></strong> on every node for <code>tc</code> and <code>nvidia-smi</code>. Interactive <code>sudo</code> is enough:
   you are prompted once, at inject time, and the auto-restore timer inherits
   that privilege. For unattended/CI use, add NOPASSWD for just those two
   binaries, e.g. in <code>/etc/sudoers.d/</code>:
@@ -1554,7 +1554,7 @@ only receive commands. You need:</p>
 <h3 id="quick-start">Quick start<a class="headerlink" href="#quick-start" title="Permanent link">#</a></h3>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>cp config.mk.example config.mk     # edit for your cluster
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>make                               # help
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>make status                        # what&#39;s running / injected, per node
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>make status                        # what's running / injected, per node
 </span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>make workload                      # start your workload (see config.mk)
 </span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>
 </span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>make inject-netem-loss PCT=1       # break something...
@@ -1595,7 +1595,7 @@ default 300); <code>inject-kill-rank</code> has none, since there is nothing to 
 <td>2</td>
 <td>added latency</td>
 <td><code>make inject-netem-delay MS=20</code></td>
-<td><code>MS</code> delay added per packet, in ms</td>
+<td><code>MS</code> delay added per packet, in milliseconds</td>
 </tr>
 <tr>
 <td>3</td>
@@ -1677,7 +1677,7 @@ don't care what the workload is; they only use <code>WORKLOAD_PROC</code> to det
   job; two jobs share the link and emit series with identical <code>hostname</code>+<code>rank</code>
   labels that silently interleave.</li>
 </ul>
-<h4 id="the-safety-timer-deadman">The safety timer ("deadman")<a class="headerlink" href="#the-safety-timer-deadman" title="Permanent link">#</a></h4>
+<h4 id="the-safety-timer-deadman">The safety timer (<code>deadman</code>)<a class="headerlink" href="#the-safety-timer-deadman" title="Permanent link">#</a></h4>
 <p>Every inject arms a timer that undoes the fault after <code>DEADMAN</code> seconds
 (default 300). Because you reach each node over the same interface or GPU you're
 degrading, this is what prevents a bad injection from stranding a node.</p>
@@ -1697,7 +1697,7 @@ ground truth, prefer a monotonic <em>bytes</em> counter and derive the rate your
 <p>To read the wire directly, independent of any exporter:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>R1=$(cat /sys/class/net/&lt;iface&gt;/statistics/tx_bytes); sleep 10
 </span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>R2=$(cat /sys/class/net/&lt;iface&gt;/statistics/tx_bytes)
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>echo &quot;$(( (R2-R1)/10/1000000 )) MB/s on the wire&quot;
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>echo "$(( (R2-R1)/10/1000000 )) MB/s on the wire"
 </span></code></pre></div>
 <h4 id="rate-queries-alias-measure-against-a-same-run-baseline">Rate queries alias: measure against a same-run baseline<a class="headerlink" href="#rate-queries-alias-measure-against-a-same-run-baseline" title="Permanent link">#</a></h4>
 <p><code>rate(&lt;counter&gt;[1m])</code> catches a whole number of scrape increments per window, so
@@ -1791,7 +1791,7 @@ without killing the job by bisection.</p>
 <h4 id="fault-2-network-latency-loss">Fault 2: Network latency / loss<a class="headerlink" href="#fault-2-network-latency-loss" title="Permanent link">#</a></h4>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>make inject-netem-loss  PCT=1       # packet loss
 </span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>make inject-netem-delay MS=20       # added latency
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>make _netem NETEM=&quot;loss 3%&quot;   # arbitrary netem expression
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>make _netem NETEM="loss 3%"   # arbitrary netem expression
 </span></code></pre></div>
 <p>Applies <code>tc netem</code> on <code>NODE</code>.</p>
 <p><strong>Signature: symmetric degradation.</strong> All ranks degrade together; network
@@ -1800,7 +1800,7 @@ cluster-dependent: on a bandwidth-bound cluster the usable band is narrow and
 the response is close to binary (a small loss degrades; a larger one flatlines
 the job). <strong>Bisect to find the value that degrades without killing.</strong></p>
 <p><strong>The <code>delay</code>-becomes-<code>loss</code> trap.</strong> netem's default queue is <code>limit 1000</code>
-packets. If the bandwidth-delay product exceeds that (tens of ms on a fast
+packets. If the bandwidth-delay product exceeds that (tens of milliseconds on a fast
 link), the queue overflows and a <code>delay</code> fault silently turns into heavy packet
 <em>loss</em>. Raise it explicitly if you want pure latency:
 <code>make _netem NETEM="delay 50ms limit 5000"</code>.</p>
@@ -1983,7 +1983,7 @@ still separate them after the fact (expected, not yet verified here):</p>
 <ul>
 <li><strong><code>pkill -f &lt;collector&gt;</code> can kill the workload</strong> if the workload's command line
   contains the collector's name. Use <code>pkill -x</code>.</li>
-<li><strong><code>pgrep -f &lt;workload-binary&gt;</code> also matches the launcher</strong> (mpirun). Resolve
+<li><strong><code>pgrep -f &lt;workload-binary&gt;</code> also matches the launcher</strong> (<code>mpirun</code>). Resolve
   rank → GPU → PID instead.</li>
 <li><strong><code>up == 0</code> alone is not a health signal</strong>: unused/misconfigured scrape
   targets are perpetually down. Key on the specific collector job.</li>

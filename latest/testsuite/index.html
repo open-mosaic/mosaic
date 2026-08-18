@@ -1709,7 +1709,7 @@ A single GPU will not produce NCCL metrics.</p>
 </span></code></pre></div></p>
 <h4 id="missing-p2p-metrics">Missing P2P metrics<a class="headerlink" href="#missing-p2p-metrics" title="Permanent link">#</a></h4>
 <p>P2P metrics require pipeline parallelism. Modify <code>docker-compose.yml</code>:
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">command</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;vllm</span><span class="nv"> </span><span class="s">serve</span><span class="nv"> </span><span class="s">...</span><span class="nv"> </span><span class="s">--pipeline-parallel-size</span><span class="nv"> </span><span class="s">2&quot;</span><span class="p p-Indicator">]</span>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">command</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"vllm</span><span class="nv"> </span><span class="s">serve</span><span class="nv"> </span><span class="s">...</span><span class="nv"> </span><span class="s">--pipeline-parallel-size</span><span class="nv"> </span><span class="s">2"</span><span class="p p-Indicator">]</span>
 </span></code></pre></div></p>
 <hr />
 <h3 id="grafana-dashboards-tests-suite">Grafana Dashboards Tests Suite<a class="headerlink" href="#grafana-dashboards-tests-suite" title="Permanent link">#</a></h3>
