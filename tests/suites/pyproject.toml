@@ -16,4 +16,4 @@ python_files = "test_*.py"
 python_functions = "test_*"
 
 [tool.uv.sources]
-production-test-framework = { git = "https://github.com/open-mosaic/production-test-framework.git" }
+production-test-framework = { git = "https://github.com/thurttdd/production-test-framework.git, branch = "tlh/EN-3488/support_scale_to_multi_gpu" }
