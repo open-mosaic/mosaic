@@ -16,4 +16,4 @@ python_files = "test_*.py"
 python_functions = "test_*"
 
 [tool.uv.sources]
-production-test-framework = { git = "https://github.com/open-mosaic/production-test-framework.git", tag = "v0.3.0" }
+production-test-framework = { git = "https://github.com/open-mosaic/production-test-framework.git" }
