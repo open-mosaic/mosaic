@@ -6,6 +6,35 @@ import os
 import pytest
 
 
+DEFAULT_PROFILE = "default"
+
+
+def pytest_addoption(parser):
+    group = parser.getgroup("mosaic")
+    group.addoption(
+        "--workload-profile",
+        action="store",
+        default=DEFAULT_PROFILE,
+        metavar="NAME",
+        help=(
+            "Hardware profile to run against, by filename stem in a --profile-dir "
+            f"(default: {DEFAULT_PROFILE})."
+        ),
+    )
+    group.addoption(
+        "--profile-dir",
+        action="append",
+        default=[],
+        metavar="PATH",
+        dest="profile_dirs",
+        help=(
+            "Directory of profile YAML files; repeatable. Defaults to the in-repo "
+            "profiler_otel/profiles/. Use this option so that a "
+            "private repo can supply its own profiles without forking this suite."
+        ),
+    )
+
+
 def pytest_configure(config):
     """Register custom markers to avoid warnings."""
     config.addinivalue_line("markers", "profiler_otel: marks tests as NCCL profiler OTEL tests")

@@ -1,0 +1,48 @@
+# SPDX-FileCopyrightText: 2025 Delos Data Inc
+# SPDX-License-Identifier: Apache-2.0
+#
+# TEST FIXTURE -- not a real deployment, and not on the default search path.
+#
+# Exercises the shapes that only occur in profiles kept outside this repository: an
+# externally deployed cluster, a single frontend base_url instead of host/port, and coverage
+# spanning several hosts and more than one NCCL communicator. Without this, that code still
+# ships here but nothing here tests it.
+description: Test fixture -- externally deployed disaggregated cluster
+
+hardware:
+  machines: 4
+  gpus_per_machine: 8
+  sku: fixture-sku
+
+serving:
+  mode: disaggregated
+  model: fixture/model
+  prefill: {nodes: 2, workers: 1, tensor_parallel: 8, expert_parallel: 8, spans_nodes: true}
+  decode:  {nodes: 2, workers: 1, tensor_parallel: 8, expert_parallel: 8, spans_nodes: true}
+  kv_transfer: nixl
+
+deployment:
+  external: true
+
+endpoint:
+  base_url: "http://fixture-frontend:8000"
+
+otel_endpoint: "http://fixture-collector:4318"
+
+coverage:
+  hosts: 4
+  ranks: 32
+  communicators: 2
+
+timeouts:
+  workload: 3600
+  metrics_available: 180
+  quiesce: 180
+
+expected_metrics: disagg_moe
+
+benchmark_options:
+  num_prompts: 8
+  max_concurrency: 2
+  ignore_eos: true
+  disable_tqdm: true

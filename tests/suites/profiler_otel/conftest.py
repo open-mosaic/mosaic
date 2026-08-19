@@ -6,8 +6,10 @@ NCCL Profiler OTEL test fixtures.
 This conftest provides fixtures and constants specific to NCCL profiler OTEL testing.
 """
 
+import math
 import os
 import time
+from urllib.parse import urlparse
 
 import pytest
 import requests
@@ -17,13 +19,12 @@ from production_test_framework.workload.prompt_workload import PromptWorkload
 from production_test_framework.workload.inferencex_workload import InferencexWorkload
 from production_test_framework.workload.nccl_workload import NcclWorkload
 
+from profiler_otel import profiles
+
 
 # =============================================================================
 # Constants
 # =============================================================================
-
-# Inferencex workload Docker exec timeout (seconds)
-DOCKER_EXEC_TIMEOUT = 1200
 
 # PROMPT = "Explain briefly the different LLM parallelization techniques."
 PROMPT = "How many oceans are there in the world?"
@@ -113,14 +114,43 @@ NCCL_PROFILER_METRICS_EXPECTED_NCCL_WORKLOAD = [
 ]
 
 
-def expected_nccl_profiler_metrics(workload) -> list[str]:
-    """Return the NCCL profiler metric names we assert on for this workload type."""
+# Expert parallelism adds all-to-all traffic that a dense tensor-parallel deployment never
+# generates, so the MoE tiers should show the p2p family on top of the dense set.
+# Note NIXL KV transfer does not go through NCCL: p2p on the disagg tiers comes from EP
+# all-to-all and cross-node sendrecv, not from the prefill/decode KV path.
+NCCL_PROFILER_METRICS_EXPECTED_AGGREGATED_MOE = list(
+    NCCL_PROFILER_METRICS_EXPECTED_INFERENCEX_WORKLOAD
+)
+NCCL_PROFILER_METRICS_EXPECTED_DISAGG_MOE = list(
+    NCCL_PROFILER_METRICS_EXPECTED_INFERENCEX_WORKLOAD
+)
+
+#: Keyed by a profile's ``expected_metrics`` field.
+METRIC_SETS_BY_NAME = {
+    "aggregated_dense": NCCL_PROFILER_METRICS_EXPECTED_INFERENCEX_WORKLOAD,
+    "aggregated_moe": NCCL_PROFILER_METRICS_EXPECTED_AGGREGATED_MOE,
+    "disagg_moe": NCCL_PROFILER_METRICS_EXPECTED_DISAGG_MOE,
+}
+
+
+def expected_nccl_profiler_metrics(
+    workload, profile: profiles.Profile | None = None
+) -> list[str]:
+    """
+    Return the NCCL profiler metric names we assert on for this workload.
+
+    The InferenceX workload serves every tier, aggregated and disaggregated alike, so its
+    expected set cannot be derived from the class -- it comes from the profile. The prompt and
+    NCCL workloads are still distinguishable by type.
+    """
     if isinstance(workload, PromptWorkload):
         return NCCL_PROFILER_METRICS_EXPECTED_PROMPT_WORKLOAD
-    if isinstance(workload, InferencexWorkload):
-        return NCCL_PROFILER_METRICS_EXPECTED_INFERENCEX_WORKLOAD
     if isinstance(workload, NcclWorkload):
         return NCCL_PROFILER_METRICS_EXPECTED_NCCL_WORKLOAD
+    if isinstance(workload, InferencexWorkload):
+        if profile is None:
+            raise ValueError("a profile is required to pick the InferenceX metric set")
+        return METRIC_SETS_BY_NAME[profile.expected_metrics]
     raise TypeError(f"Unsupported workload type: {type(workload)!r}")
 
 
@@ -164,9 +194,59 @@ def metric_total(prometheus_url: str, metric_name: str) -> float | None:
     if not series:
         return None
     try:
-        return float(series[0]["value"][1])
+        value = float(series[0]["value"][1])
     except (KeyError, IndexError, ValueError):
         return None
+    # Prometheus legitimately returns NaN for some series. float() accepts it, and every
+    # comparison against NaN is False, so a NaN total would silently read as "did not
+    # increase" -- indistinguishable from a profiler that produced nothing.
+    return value if math.isfinite(value) else None
+
+
+def metric_totals_by(
+    prometheus_url: str, metric_name: str, label: str = "hostname"
+) -> dict[str, float]:
+    """
+    Total for *metric_name* broken down by *label*, e.g. ``{"gpu-node-03": 1234.0}``.
+
+    :func:`metric_total` sums across every series, so one reporting rank makes the total rise
+    and the assertion passes while every other rank is silent. On a 96-GPU cluster that is the
+    difference between a real check and no check at all. The profiler labels every series with
+    ``hostname``, ``rank``, ``local_rank`` and ``communicator``, so the breakdown is free.
+
+    Returns an empty dict when the series does not exist.
+    """
+    series = query_prometheus(prometheus_url, f"sum by ({label}) ({metric_name})")
+    totals: dict[str, float] = {}
+    for item in series:
+        key = item.get("metric", {}).get(label)
+        if key is None:
+            continue
+        try:
+            value = float(item["value"][1])
+        except (KeyError, IndexError, ValueError):
+            continue
+        # See metric_total: a NaN would read as a flat host rather than an absent one.
+        if math.isfinite(value):
+            totals[key] = value
+    return totals
+
+
+def reporting_ranks(prometheus_url: str, metric_name: str) -> set[tuple[str, str]]:
+    """
+    The ``(hostname, rank)`` pairs currently exporting *metric_name*.
+
+    Used to check that every rank we expect is present, and to name the ones that are not --
+    "3 ranks did not report" is not actionable without knowing which node they were on.
+    """
+    series = query_prometheus(prometheus_url, f"count by (hostname, rank) ({metric_name})")
+    pairs: set[tuple[str, str]] = set()
+    for item in series:
+        labels = item.get("metric", {})
+        host, rank = labels.get("hostname"), labels.get("rank")
+        if host is not None and rank is not None:
+            pairs.add((host, rank))
+    return pairs
 
 
 def snapshot_metric_totals(prometheus_url: str, metric_names: list[str]) -> dict[str, float | None]:
@@ -233,6 +313,35 @@ def wait_for_metrics_quiesced(
 
 
 @pytest.fixture(scope="session")
+def workload_profile(request) -> profiles.Profile:
+    """
+    The hardware profile under test, from ``--workload-profile``.
+
+    Session-scoped: one profile describes the deployment the whole run targets.
+    """
+    name = request.config.getoption("--workload-profile")
+    extra_dirs = request.config.getoption("profile_dirs")
+    try:
+        profile = profiles.load(name, profiles.profile_dirs(extra_dirs))
+    except profiles.ProfileError as exc:
+        # Fail outside the except block so pytest reports the message alone rather than
+        # chaining it onto a traceback nobody needs.
+        error = str(exc)
+        profile = None
+    else:
+        error = None
+    if error is not None:
+        pytest.fail(error, pytrace=False)
+    print(f"\n  Profile: {profile.name} ({profile.path})")
+    print(f"    {profile.description}")
+    print(
+        f"    expecting {profile.coverage.hosts} host(s), {profile.coverage.ranks} rank(s), "
+        f"{profile.coverage.communicators} communicator(s)"
+    )
+    return profile
+
+
+@pytest.fixture(scope="session")
 def prometheus_url() -> str:
     """
     Provide the Prometheus URL.
@@ -247,13 +356,47 @@ def prometheus_url() -> str:
 # =============================================================================
 
 
+def _endpoint_host_port(profile: profiles.Profile) -> tuple[str, int] | None:
+    """
+    ``(host, port)`` for a profile reached that way, or None for a base_url profile.
+
+    A disaggregated cluster sits behind a single frontend URL, which host+port cannot express.
+    The model guarantees exactly one of the two forms is set.
+    """
+    if profile.endpoint.base_url is not None:
+        return None
+    return profile.endpoint.host, profile.endpoint.port
+
+
 @pytest.fixture(scope="session")
-def vllm_config() -> VllmConfig:
+def vllm_config(workload_profile: profiles.Profile) -> VllmConfig:
     """
-    Provide vLLM configuration.
+    Provide vLLM configuration, defaulting to the profile's endpoint.
+
+    VLLM_HOST/VLLM_PORT keep the override behaviour documented in docs/testsuite.md; only the
+    fallback moves from a module constant to the profile. Without that, a disaggregated profile
+    would point the InferenceX workload at the frontend while this fixture -- and so
+    ``vllm_ready`` and ``prompt_workload`` -- still probed localhost:8080.
     """
-    host = os.getenv("VLLM_HOST", DEFAULT_VLLM_HOST)
-    port = int(os.getenv("VLLM_PORT", str(DEFAULT_VLLM_PORT)))
+    host_port = _endpoint_host_port(workload_profile)
+    if host_port is None:
+        base_url = workload_profile.endpoint.base_url
+        parsed = urlparse(base_url)
+        if not parsed.hostname:
+            pytest.fail(f"profile endpoint base_url is not a usable URL: {base_url!r}")
+        # VllmConfig is host/port only and hardcodes http://. Fine for a plain frontend; a
+        # TLS-terminated or path-prefixed one needs a base_url field on VllmConfig upstream.
+        if parsed.scheme not in ("", "http"):
+            pytest.fail(
+                f"profile endpoint base_url uses scheme {parsed.scheme!r}; VllmConfig only "
+                "builds http:// URLs from host/port. Add base_url support to VllmConfig."
+            )
+        default_host, default_port = parsed.hostname, parsed.port or 80
+    else:
+        default_host, default_port = host_port
+
+    host = os.getenv("VLLM_HOST", default_host)
+    port = int(os.getenv("VLLM_PORT", str(default_port)))
     return VllmConfig(host=host, port=port)
 
 
@@ -277,26 +420,55 @@ def vllm_ready(vllm_client: VllmClient) -> bool:
 
 
 @pytest.fixture(scope="session")
-def prompt_workload():
+def prompt_workload(vllm_config: VllmConfig):
     """
-    Provide a prompt workload.
+    Provide a prompt workload aimed at the profile's endpoint.
     """
-    return PromptWorkload(prompt=PROMPT)
+    return PromptWorkload(prompt=PROMPT, host=vllm_config.host, port=vllm_config.port)
 
 
 @pytest.fixture(scope="session")
-def inferencex_workload():
+def inferencex_workload(workload_profile: profiles.Profile):
     """
-    Provide an inferencex workload.
+    Provide an InferenceX workload configured by the profile.
+
+    ``benchmark_options`` is handed to the workload verbatim: it converts keys to
+    benchmark_serving.py flags generically, so a profile can set any flag that script accepts
+    without a change here. The endpoint is layered underneath, where ``None`` means "omit the
+    flag" -- which is how a base_url profile drops the default host/port.
     """
-    return InferencexWorkload(docker_exec_timeout=DOCKER_EXEC_TIMEOUT)
+    options = dict(workload_profile.benchmark_options)
+    host_port = _endpoint_host_port(workload_profile)
+    if host_port is None:
+        options.setdefault("base_url", workload_profile.endpoint.base_url)
+        options.setdefault("host", None)
+        options.setdefault("port", None)
+    else:
+        options.setdefault("host", host_port[0])
+        options.setdefault("port", host_port[1])
+    options.setdefault("model", workload_profile.serving.model)
+
+    return InferencexWorkload(
+        benchmark_options=options,
+        docker_exec_timeout=workload_profile.timeouts.workload,
+        # Let Docker name the container: a fixed name collides with a leftover or concurrent
+        # run, which on a shared test box is a real failure mode.
+        container_name=None,
+    )
+
 
 @pytest.fixture(scope="session")
-def nccl_workload():
+def nccl_workload(workload_profile: profiles.Profile):
     """
-    Provide an NCCL workload.
+    Provide an NCCL workload sized to the profile's machine.
     """
-    return NcclWorkload(max_bytes="128M", gpus="device=0,1", gpus_per_host=2)
+    gpus_per_machine = workload_profile.hardware.gpus_per_machine
+    device_list = ",".join(str(i) for i in range(gpus_per_machine))
+    return NcclWorkload(
+        max_bytes="128M",
+        gpus=f"device={device_list}",
+        gpus_per_host=gpus_per_machine,
+    )
 
 
 @pytest.fixture

@@ -708,10 +708,16 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "production-test-framework" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "production-test-framework", git = "https://github.com/open-mosaic/production-test-framework.git" }]
+requires-dist = [
+    { name = "production-test-framework", git = "https://github.com/thurttdd/production-test-framework.git?branch=tlh%2FEN-3488%2Fsupport_scale_to_multi_gpu" },
+    { name = "pydantic", specifier = ">=2.0" },
+    { name = "pyyaml", specifier = ">=6.0" },
+]
 
 [[package]]
 name = "msgpack"
@@ -877,8 +883,8 @@ wheels = [
 
 [[package]]
 name = "production-test-framework"
-version = "0.3.1.dev19+gaa696a216"
-source = { git = "https://github.com/open-mosaic/production-test-framework.git#aa696a216818d62a0109bcf41c83b597a74ca06f" }
+version = "0.2.0.dev28+g6effa245c"
+source = { git = "https://github.com/thurttdd/production-test-framework.git?branch=tlh%2FEN-3488%2Fsupport_scale_to_multi_gpu#6effa245ce7e2ec3a3cf7c229af6ad60fba9ba0e" }
 dependencies = [
     { name = "ansible-core" },
     { name = "docopt" },
