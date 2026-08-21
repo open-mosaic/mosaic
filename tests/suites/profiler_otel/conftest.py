@@ -30,6 +30,14 @@ from profiler_otel import profiles
 # PROMPT = "Explain briefly the different LLM parallelization techniques."
 PROMPT = "How many oceans are there in the world?"
 
+# Sent once before any measurement. The content is irrelevant -- it exists to get the server
+# and the telemetry pipeline out of their cold state, not to test anything.
+WARMUP_PROMPT = "Warm up."
+
+# Metric used to decide the telemetry pipeline is producing real values. A counter is the most
+# reliable of the family, and this one is expected for every profile.
+WARMUP_PROBE_METRIC = "nccl_profiler_collective_bytes_total"
+
 # Default vLLM configuration
 DEFAULT_VLLM_HOST = "localhost"
 DEFAULT_VLLM_PORT = 8080
@@ -433,7 +441,58 @@ def vllm_ready(vllm_client: VllmClient) -> bool:
 
 
 @pytest.fixture(scope="session")
-def prompt_workload(vllm_config: VllmConfig):
+def profiler_pipeline_warm(
+    workload_profile, vllm_ready, vllm_client: VllmClient, prometheus_url: str
+):
+    """
+    Drive one throwaway inference and wait for its telemetry to arrive, before any measurement.
+
+    Without this the first workload of a session measures a cold server *and* an empty metrics
+    pipeline, neither of which is what the test is about. Both were seen to fail a run on a
+    4-GPU box:
+
+    * the first inference after start-up took 65s against a few seconds in steady state, long
+      enough to eat into the window allowed for metrics to arrive;
+    * with no series in Prometheus yet, ``wait_for_metrics_quiesced`` settles immediately on
+      "nothing exists" and hands back a baseline of absent for every metric. The assertion then
+      reduces to "the first sample ever published must already exceed zero", which a profiler
+      that registers its instruments before recording anything fails by publishing a flat zero.
+
+    Warming up first makes the baseline a real number and every measurement a steady-state one.
+    Re-running the same workload against an already-warm stack passed, which is what identified
+    this.
+    """
+    print("\n  Warming up the server and the telemetry pipeline before measuring...")
+    started = time.monotonic()
+    result = vllm_client.complete(WARMUP_PROMPT)
+    if not result.success:
+        pytest.fail(
+            f"warm-up inference failed, so nothing measured after it can be trusted: {result.error}"
+        )
+    print(f"    Warm-up inference took {time.monotonic() - started:.1f}s")
+
+    # Waiting for the inference to return is not enough: export is chunky, and a whole
+    # workload's worth of bytes can land in a single scrape well after the request finished.
+    # Wait for a value to actually appear, so the first baseline is taken against a live series.
+    deadline = time.monotonic() + workload_profile.timeouts.metrics_available
+    while True:
+        total = metric_total(prometheus_url, WARMUP_PROBE_METRIC)
+        if total:
+            print(f"    Telemetry pipeline live: {WARMUP_PROBE_METRIC}={total:.6g}")
+            return
+        if time.monotonic() >= deadline:
+            # Not fatal. The tests assert on an increase and will fail on their own terms with
+            # better diagnostics than this fixture could produce.
+            print(
+                f"    WARNING: {WARMUP_PROBE_METRIC} still absent or zero "
+                f"{workload_profile.timeouts.metrics_available}s after the warm-up inference"
+            )
+            return
+        time.sleep(QUIESCE_POLL_INTERVAL)
+
+
+@pytest.fixture(scope="session")
+def prompt_workload(vllm_config: VllmConfig, profiler_pipeline_warm):
     """
     Provide a prompt workload aimed at the profile's endpoint.
     """
@@ -441,7 +500,7 @@ def prompt_workload(vllm_config: VllmConfig):
 
 
 @pytest.fixture(scope="session")
-def inferencex_workload(workload_profile: profiles.Profile):
+def inferencex_workload(workload_profile: profiles.Profile, profiler_pipeline_warm):
     """
     Provide an InferenceX workload configured by the profile.
 
@@ -470,7 +529,7 @@ def inferencex_workload(workload_profile: profiles.Profile):
 
 
 @pytest.fixture(scope="session")
-def nccl_workload(workload_profile: profiles.Profile):
+def nccl_workload(workload_profile: profiles.Profile, profiler_pipeline_warm):
     """
     Provide an NCCL workload sized to the profile's machine.
     """
