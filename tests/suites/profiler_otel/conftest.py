@@ -15,6 +15,7 @@ import pytest
 import requests
 
 from production_test_framework.vllm import VllmClient, VllmConfig
+from production_test_framework.docker import remove_containers_by_label
 from production_test_framework.workload.prompt_workload import PromptWorkload
 from production_test_framework.workload.inferencex_workload import InferencexWorkload
 from production_test_framework.workload.nccl_workload import NcclWorkload
@@ -312,6 +313,18 @@ def wait_for_metrics_quiesced(
 # =============================================================================
 
 
+@pytest.fixture(scope="session", autouse=True)
+def sweep_orphaned_workload_containers():
+    """
+    Remove any workload container still running when the session ends.
+    """
+    yield
+
+    removed = remove_containers_by_label()
+    if removed:
+        print(f"\n  Removed {len(removed)} orphaned workload container(s): {removed}")
+
+
 @pytest.fixture(scope="session")
 def workload_profile(request) -> profiles.Profile:
     """
@@ -448,12 +461,11 @@ def inferencex_workload(workload_profile: profiles.Profile):
         options.setdefault("port", host_port[1])
     options.setdefault("model", workload_profile.serving.model)
 
+    # container_name is left to the workload, which generates one unique to this process and
+    # removes it when the run ends however it ends.
     return InferencexWorkload(
         benchmark_options=options,
         docker_exec_timeout=workload_profile.timeouts.workload,
-        # Let Docker name the container: a fixed name collides with a leftover or concurrent
-        # run, which on a shared test box is a real failure mode.
-        container_name=None,
     )
 
 
