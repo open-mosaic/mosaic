@@ -104,7 +104,7 @@ series with `hostname`, `rank`, `local_rank` and `communicator`:
 
 ```text title="Prometheus queries"
 sum by (hostname) (nccl_profiler_collective_bytes_total)
-count by (hostname, rank) (nccl_profiler_collective_bytes_total)
+sum by (hostname, rank) (nccl_profiler_collective_bytes_total)
 sum by (communicator) (nccl_profiler_collective_bytes_total)
 ```
 

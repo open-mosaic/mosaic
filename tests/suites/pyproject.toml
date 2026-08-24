@@ -16,6 +16,9 @@ pythonpath = ["."]
 testpaths = ["."]
 python_files = "test_*.py"
 python_functions = "test_*"
+filterwarnings = [
+    'ignore:This process .* is multi-threaded, use of fork\(\) may lead to deadlocks in the child:DeprecationWarning',
+]
 
 [tool.uv.sources]
 production-test-framework = { git = "https://github.com/thurttdd/production-test-framework.git", branch = "tlh/EN-3488/support_scale_to_multi_gpu" }

@@ -241,21 +241,27 @@ def metric_totals_by(
     return totals
 
 
-def reporting_ranks(prometheus_url: str, metric_name: str) -> set[tuple[str, str]]:
+def metric_totals_by_rank(prometheus_url: str, metric_name: str) -> dict[tuple[str, str], float]:
     """
-    The ``(hostname, rank)`` pairs currently exporting *metric_name*.
+    Total for *metric_name* per ``(hostname, rank)``.
 
-    Used to check that every rank we expect is present, and to name the ones that are not --
-    "3 ranks did not report" is not actionable without knowing which node they were on.
+    ``hostname`` is the container's hostname, which for a container is its id unless one was
+    set explicitly -- so two containers on one machine appear as two distinct hosts.
     """
-    series = query_prometheus(prometheus_url, f"count by (hostname, rank) ({metric_name})")
-    pairs: set[tuple[str, str]] = set()
+    series = query_prometheus(prometheus_url, f"sum by (hostname, rank) ({metric_name})")
+    totals: dict[tuple[str, str], float] = {}
     for item in series:
         labels = item.get("metric", {})
         host, rank = labels.get("hostname"), labels.get("rank")
-        if host is not None and rank is not None:
-            pairs.add((host, rank))
-    return pairs
+        if host is None or rank is None:
+            continue
+        try:
+            value = float(item["value"][1])
+        except (KeyError, IndexError, ValueError):
+            continue
+        if math.isfinite(value):
+            totals[(host, rank)] = value
+    return totals
 
 
 def snapshot_metric_totals(prometheus_url: str, metric_names: list[str]) -> dict[str, float | None]:

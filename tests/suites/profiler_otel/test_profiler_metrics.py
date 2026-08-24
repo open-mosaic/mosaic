@@ -20,7 +20,7 @@ from profiler_otel.conftest import (
     metric_increased,
     metric_total,
     metric_totals_by,
-    reporting_ranks,
+    metric_totals_by_rank,
     wait_for_metrics_quiesced,
 )
 
@@ -267,86 +267,99 @@ class TestNCCLProfilerTelemetry:
         prometheus_url: str,
     ):
         """
-        :title: Telemetry - every node, rank and communicator reports
+        :title: Telemetry - every node, rank and communicator does work
         :suite: profiler_otel
-        :description: Verify the profiler reports from every expected host, rank and NCCL
-            communicator, not merely somewhere. The other tests sum a metric across all of
-            its series, so a single healthy rank makes the total rise and they pass while
-            every other rank is silent -- on a 96-GPU cluster that is the difference between
-            a real check and no check at all. Coverage comes from the profile.
+        :description: Verify the profiler reports NCCL activity from every expected host, rank
+            and communicator, not merely from somewhere. The other tests sum a metric across
+            all of its series, so one healthy rank makes the total rise and they pass while
+            every other rank is silent. Expected counts come from the profile's coverage.
         """
         coverage = workload_profile.coverage
         timeouts = workload_profile.timeouts
         metrics = expected_nccl_profiler_metrics(inferencex_workload, workload_profile)
 
-        # One metric is enough to establish who is reporting, and keeps the query cheap at
-        # high rank counts. A counter is the most reliable of the family.
+        # One metric is enough to establish who did work, and keeps the query cheap at high
+        # rank counts. A counter is the most reliable of the family.
         probe = "nccl_profiler_collective_bytes_total"
         if probe not in metrics:
             probe = metrics[0]
 
-        baseline_by_host = metric_totals_by(prometheus_url, probe)
+        # Counted by *increase*, not by presence. Every containerised workload exports under
+        # these same metric names, and the collector keeps republishing a series long after its
+        # container is gone, so simply being present says nothing about this workload.
+        baseline_by_rank = metric_totals_by_rank(prometheus_url, probe)
+        baseline_by_comm = metric_totals_by(prometheus_url, probe, label="communicator")
         _settle_and_snapshot(prometheus_url, [probe], timeouts.quiesce)
 
         workload_result = _run_workload(inferencex_workload, timeouts.workload)
 
-        # Give the last ranks' samples time to land before judging who is missing.
+        def active_participants():
+            """Ranks, hosts and communicators whose totals rose during this workload."""
+            by_rank = metric_totals_by_rank(prometheus_url, probe)
+            ranks = {
+                key
+                for key, total in by_rank.items()
+                if metric_increased(baseline_by_rank.get(key), total)
+            }
+            by_comm = metric_totals_by(prometheus_url, probe, label="communicator")
+            comms = {
+                name
+                for name, total in by_comm.items()
+                if metric_increased(baseline_by_comm.get(name), total)
+            }
+            return ranks, {host for host, _ in ranks}, comms
+
+        # Give the last ranks' samples time to land before judging who is missing; export is
+        # chunky, and a whole workload's traffic can appear in a single scrape.
         deadline = time.monotonic() + timeouts.metrics_available
         while True:
-            by_host = metric_totals_by(prometheus_url, probe)
-            ranks = reporting_ranks(prometheus_url, probe)
-            by_comm = metric_totals_by(prometheus_url, probe, label="communicator")
+            ranks, hosts, comms = active_participants()
             enough = (
-                len(by_host) >= coverage.hosts
+                len(hosts) >= coverage.hosts
                 and len(ranks) >= coverage.ranks
-                and len(by_comm) >= coverage.communicators
+                and len(comms) >= coverage.communicators
             )
             if enough or time.monotonic() >= deadline:
                 break
             time.sleep(METRICS_POLL_INTERVAL)
 
+        ranks_by_host: dict[str, list[str]] = {}
+        for host, rank in sorted(ranks):
+            ranks_by_host.setdefault(host, []).append(rank)
+
         print(
-            f"\n  Reporting after {time.time() - workload_result.end_time:.1f}s: "
-            f"{len(by_host)}/{coverage.hosts} hosts, "
+            f"\n  Did work within {time.time() - workload_result.end_time:.1f}s of the "
+            f"workload ending: {len(hosts)}/{coverage.hosts} hosts, "
             f"{len(ranks)}/{coverage.ranks} ranks, "
-            f"{len(by_comm)}/{coverage.communicators} communicators"
+            f"{len(comms)}/{coverage.communicators} communicators"
         )
-        print(f"    hosts: {sorted(by_host)}")
-        print(f"    communicators: {sorted(by_comm)}")
+        print(f"    ranks per host: {ranks_by_host}")
+        print(f"    communicators : {sorted(comms)}")
 
         problems: list[str] = []
-
-        if len(by_host) != coverage.hosts:
+        if len(hosts) != coverage.hosts:
             problems.append(
-                f"expected {coverage.hosts} reporting host(s), saw {len(by_host)}: "
-                f"{sorted(by_host)}"
+                f"expected {coverage.hosts} host(s) doing work, saw {len(hosts)}: {sorted(hosts)}"
             )
         if len(ranks) != coverage.ranks:
-            by_host_ranks: dict[str, list[str]] = {}
-            for host, rank in sorted(ranks):
-                by_host_ranks.setdefault(host, []).append(rank)
             problems.append(
-                f"expected {coverage.ranks} reporting rank(s), saw {len(ranks)}, "
-                f"per host: {by_host_ranks}"
+                f"expected {coverage.ranks} rank(s) doing work, saw {len(ranks)}, "
+                f"per host: {ranks_by_host}"
             )
-        # Prefill and decode pools form separate communicators; a global total rises even
-        # when only one of them is alive.
-        if len(by_comm) < coverage.communicators:
+        # Prefill and decode pools form separate communicators; a global total rises even when
+        # only one of them is alive.
+        if len(comms) < coverage.communicators:
             problems.append(
-                f"expected at least {coverage.communicators} NCCL communicator(s), saw "
-                f"{len(by_comm)}: {sorted(by_comm)}"
+                f"expected at least {coverage.communicators} NCCL communicator(s) doing work, "
+                f"saw {len(comms)}: {sorted(comms)}"
             )
 
-        # Each host must have done work of its own, not merely have a series present.
-        flat_hosts = [
-            host
-            for host, total in by_host.items()
-            if not metric_increased(baseline_by_host.get(host), total)
-        ]
-        if flat_hosts:
-            problems.append(
-                f"host(s) reporting but with a flat total across the workload: {flat_hosts}"
-            )
+        if problems:
+            # A rank present but flat is a different fault from a rank missing entirely, and
+            # they need different fixes, so name which one this is.
+            idle = sorted(set(metric_totals_by_rank(prometheus_url, probe)) - ranks)
+            if idle:
+                print(f"  Reporting a series but flat across this workload: {idle}")
 
         assert not problems, (
             f"NCCL profiler coverage does not match profile '{workload_profile.name}' "
