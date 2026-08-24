@@ -47,10 +47,6 @@ def _format_totals(totals: dict[str, float | None]) -> str:
 def _settle_and_snapshot(prometheus_url, metric_names, quiesce_timeout):
     """
     Wait for the metric totals to stop moving, then return them as a baseline.
-
-    Settling first matters: the collector republishes every series it has seen on each scrape,
-    so "a sample exists" is true forever after the first NCCL op anywhere in the session and
-    proves nothing about the workload about to run. Only a rise above a settled baseline does.
     """
     print("\n  Waiting for NCCL metric totals to settle before taking a baseline...")
     baseline, settled = wait_for_metrics_quiesced(
