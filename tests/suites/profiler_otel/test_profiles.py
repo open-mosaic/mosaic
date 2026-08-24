@@ -245,6 +245,68 @@ class TestProfilesCli:
         assert code == 0
         assert capsys.readouterr().out.strip() == ""
 
+    def test_deployment_env_prints_the_profile_facts(self, capsys):
+        """
+        :title: Profiles CLI - deployment-env exposes the values a deployment needs
+        :suite: profiler_otel
+        :description: A compose file or deployment script should take the model, parallelism,
+            port and GPU count from the profile rather than restating them, which is what
+            makes the numbers drift apart.
+        """
+        assert profiles._main(["deployment-env", "default"]) == 0
+        env = dict(line.split("=", 1) for line in capsys.readouterr().out.split())
+        assert env["PROFILE_NAME"] == "default"
+        assert env["PROFILE_MODEL"] == "Qwen/Qwen3-8B"
+        assert env["PROFILE_GPUS_PER_MACHINE"] == "2"
+        assert env["PROFILE_TENSOR_PARALLEL"] == "2"
+        assert env["PROFILE_PORT"] == "8080"
+
+    def test_deployment_env_matches_the_loaded_profile(self, capsys):
+        """
+        :title: Profiles CLI - deployment-env agrees with the profile it read
+        :suite: profiler_otel
+        :description: The point of emitting these is that they cannot disagree with the
+            profile; assert that directly rather than against literals.
+        """
+        profile = profiles.load("default", profiles.profile_dirs())
+        profiles._main(["deployment-env", "default"])
+        env = dict(line.split("=", 1) for line in capsys.readouterr().out.split())
+        assert env["PROFILE_MODEL"] == profile.serving.model
+        assert env["PROFILE_TENSOR_PARALLEL"] == str(profile.serving.tensor_parallel)
+        assert env["PROFILE_GPUS_PER_MACHINE"] == str(profile.hardware.gpus_per_machine)
+        assert env["PROFILE_PORT"] == str(profile.endpoint.port)
+
+    def test_deployment_env_covers_externally_deployed_profiles(self, capsys):
+        """
+        :title: Profiles CLI - deployment-env works for an externally deployed profile
+        :suite: profiler_otel
+        :description: "external" means this suite does not bring the stack up, not that
+            nothing does. A harness in another repository owns those deployments and still
+            needs the machine's shape from the profile, so the facts must be emitted.
+        """
+        code = profiles._main(
+            ["deployment-env", "fixture_external_disagg", "--profile-dir", str(FIXTURE_PROFILE_DIR)]
+        )
+        assert code == 0
+        env = dict(line.split("=", 1) for line in capsys.readouterr().out.split())
+        assert env["PROFILE_MODEL"] == "fixture/model"
+        assert env["PROFILE_GPUS_PER_MACHINE"] == "8"
+
+    def test_deployment_env_omits_fields_a_profile_does_not_define(self, capsys):
+        """
+        :title: Profiles CLI - deployment-env omits what the profile leaves unset
+        :suite: profiler_otel
+        :description: A disaggregated profile has no single tensor-parallel size, and one
+            reached through a frontend has no port. Emitting an empty value would push a
+            blank into a command line; omitting lets the consumer keep its own default.
+        """
+        profiles._main(
+            ["deployment-env", "fixture_external_disagg", "--profile-dir", str(FIXTURE_PROFILE_DIR)]
+        )
+        env = dict(line.split("=", 1) for line in capsys.readouterr().out.split())
+        assert "PROFILE_TENSOR_PARALLEL" not in env, "disaggregated profiles have no single TP"
+        assert "PROFILE_PORT" not in env, "a base_url profile has no port"
+
     def test_unknown_profile_exits_nonzero(self, capsys):
         """
         :title: Profiles CLI - an unknown profile is an error

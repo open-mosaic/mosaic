@@ -381,19 +381,50 @@ def load(name: str, dirs: list[Path]) -> Profile:
     return parse_profile(name, data, path)
 
 
+def deployment_env(profile: Profile) -> dict[str, str]:
+    """
+    The profile's deployment facts, as shell variables.
+
+    So that a compose file or deployment script can take the model, parallelism, port and GPU
+    count from the profile instead of restating them. Restating is what makes a profile
+    decorative: the numbers drift, and adding a machine tier means editing the deployment
+    alongside the profile that is supposed to describe it.
+
+    Emitted whatever the deployment mode. ``external`` means *this suite* does not bring the
+    stack up, not that nothing does -- a harness in another repository may own the deployment
+    and still want the machine's shape from here. Fields a profile does not define are simply
+    absent from the result: a disaggregated profile has no single tensor-parallel size, and one
+    reached through a frontend has no port.
+    """
+    env = {
+        "PROFILE_NAME": profile.name,
+        "PROFILE_MODEL": profile.serving.model,
+        "PROFILE_GPUS_PER_MACHINE": str(profile.hardware.gpus_per_machine),
+    }
+    if profile.serving.tensor_parallel is not None:
+        env["PROFILE_TENSOR_PARALLEL"] = str(profile.serving.tensor_parallel)
+    if profile.serving.expert_parallel is not None:
+        env["PROFILE_EXPERT_PARALLEL"] = str(profile.serving.expert_parallel)
+    if profile.endpoint.port is not None:
+        env["PROFILE_PORT"] = str(profile.endpoint.port)
+    return env
+
+
 def _main(argv: list[str] | None = None) -> int:
     """Query profiles from a shell, for orchestration that is not this repository's Makefile.
 
         python -m profiler_otel.profiles compose-file <name> [--profile-dir DIR ...]
+        python -m profiler_otel.profiles deployment-env <name> [--profile-dir DIR ...]
         python -m profiler_otel.profiles list [--profile-dir DIR ...]
 
-    `compose-file` prints nothing and exits 0 for an externally deployed profile,
-    so a caller can treat empty output as "nothing to bring up".
+    `compose-file` prints nothing and exits 0 for an externally deployed profile, so a caller
+    can treat empty output as "nothing to bring up". `deployment-env` prints KEY=VALUE lines
+    for a deployment to consume, and likewise prints nothing for an external profile.
     """
     import argparse
 
     parser = argparse.ArgumentParser(prog="profiler_otel.profiles")
-    parser.add_argument("command", choices=("compose-file", "list"))
+    parser.add_argument("command", choices=("compose-file", "deployment-env", "list"))
     parser.add_argument("name", nargs="?")
     parser.add_argument("--profile-dir", action="append", dest="profile_dirs", default=[])
     args = parser.parse_args(argv)
@@ -406,12 +437,18 @@ def _main(argv: list[str] | None = None) -> int:
         return 0
 
     if not args.name:
-        parser.error("compose-file requires a profile name")
+        parser.error(f"{args.command} requires a profile name")
     try:
         profile = load(args.name, dirs)
     except ProfileError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+
+    if args.command == "deployment-env":
+        for key, value in deployment_env(profile).items():
+            print(f"{key}={value}")
+        return 0
+
     if profile.compose_file is not None:
         print(profile.compose_file)
     return 0
