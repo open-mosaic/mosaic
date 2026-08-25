@@ -348,6 +348,8 @@ def workload_profile(request) -> profiles.Profile:
     """
     name = request.config.getoption("--workload-profile")
     extra_dirs = request.config.getoption("profile_dirs")
+
+    error = None
     try:
         profile = profiles.load(name, profiles.profile_dirs(extra_dirs))
     except profiles.ProfileError as exc:
@@ -355,8 +357,7 @@ def workload_profile(request) -> profiles.Profile:
         # chaining it onto a traceback nobody needs.
         error = str(exc)
         profile = None
-    else:
-        error = None
+
     if error is not None:
         pytest.fail(error, pytrace=False)
     print(f"\n  Profile: {profile.name} ({profile.path})")
