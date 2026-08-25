@@ -14,7 +14,7 @@
         <link rel="prev" href="../validation/">
       
       
-        <link rel="next" href="../fault-playbook/">
+        <link rel="next" href="../profiles/">
       
       
         
@@ -1020,6 +1020,36 @@
   
   
     <li class="md-nav__item">
+      <a href="../profiles/" class="md-nav__link">
+        
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M32 64C14.3 64 0 78.3 0 96s14.3 32 32 32h86.7c12.3 28.3 40.5 48 73.3 48s61-19.7 73.3-48H480c17.7 0 32-14.3 32-32s-14.3-32-32-32H265.3C253 35.7 224.8 16 192 16s-61 19.7-73.3 48zm0 160c-17.7 0-32 14.3-32 32s14.3 32 32 32h246.7c12.3 28.3 40.5 48 73.3 48s61-19.7 73.3-48H480c17.7 0 32-14.3 32-32s-14.3-32-32-32h-54.7c-12.3-28.3-40.5-48-73.3-48s-61 19.7-73.3 48zm0 160c-17.7 0-32 14.3-32 32s14.3 32 32 32h54.7c12.3 28.3 40.5 48 73.3 48s61-19.7 73.3-48H480c17.7 0 32-14.3 32-32s-14.3-32-32-32H233.3c-12.3-28.3-40.5-48-73.3-48s-61 19.7-73.3 48z"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+    Hardware Profiles
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../fault-playbook/" class="md-nav__link">
         
   
@@ -1534,6 +1564,9 @@ SPDX-License-Identifier: Apache-2.0
 1. The LGTM stack (Loki, Grafana, Tempo, Mimir) and OTel Collector are accessible
 2. vLLM inference triggers NCCL operations
 3. The NCCL profiler exports metrics to Prometheus via OpenTelemetry</p>
+<p>The load a run drives, the timeouts it allows and the telemetry coverage it expects come from a
+<a href="../profiles/">hardware profile</a>, so the same suite runs against anything from the two-GPU
+continuous integration machine to a multi-machine cluster.</p>
 <h3 id="hardware-requirements">Hardware Requirements<a class="headerlink" href="#hardware-requirements" title="Permanent link">#</a></h3>
 <p><strong>Minimum 2 NVIDIA GPUs required.</strong>
 These tests validate NCCL profiler metrics, which are only generated when multi-GPU parallelism (tensor or pipeline) triggers inter-GPU communication.
@@ -1561,6 +1594,10 @@ A single GPU will not produce NCCL metrics.</p>
 </thead>
 <tbody>
 <tr>
+<td><code>workload_profile</code></td>
+<td>The <a href="../profiles/">hardware profile</a> under test; supplies endpoints, load, timeouts and expected coverage</td>
+</tr>
+<tr>
 <td><code>prometheus_url</code></td>
 <td>Prometheus API endpoint (default: <code>http://localhost:9090</code>)</td>
 </tr>
@@ -1577,12 +1614,20 @@ A single GPU will not produce NCCL metrics.</p>
 <td>Waits for vLLM to be healthy</td>
 </tr>
 <tr>
-<td><code>inference_completed</code></td>
-<td>Runs inference to trigger NCCL operations</td>
+<td><code>prompt_workload</code></td>
+<td>Single completion request against the profile's endpoint</td>
 </tr>
 <tr>
-<td><code>nccl_profiler_metrics</code></td>
-<td>List of expected Prometheus metric names</td>
+<td><code>inferencex_workload</code></td>
+<td>Benchmark run configured from the profile's <code>benchmark_options</code></td>
+</tr>
+<tr>
+<td><code>nccl_workload</code></td>
+<td><code>nccl-tests</code> binary sized to the profile's GPU count</td>
+</tr>
+<tr>
+<td><code>workload</code></td>
+<td>Dispatches to one of the above by indirect parametrization</td>
 </tr>
 </tbody>
 </table>
@@ -1606,10 +1651,23 @@ A single GPU will not produce NCCL metrics.</p>
 </tr>
 <tr>
 <td><code>test_nccl_metrics_exported_after_inference</code></td>
-<td>Runs inference and validates all expected NCCL metrics appear in Prometheus</td>
+<td>Runs each workload and requires every expected NCCL metric to rise above a settled baseline</td>
+</tr>
+<tr>
+<td><code>test_every_node_reports_nccl_metrics</code></td>
+<td>Requires every host, rank and communicator in the profile's <code>coverage</code> to report</td>
+</tr>
+<tr>
+<td><code>test_metrics_do_not_increase_without_a_workload</code></td>
+<td>Runs nothing and requires the totals to stay flat</td>
 </tr>
 </tbody>
 </table>
+<p>The last two exist because the exporter republishes every series it has seen on each scrape.
+A test that only checks a sample is present passes forever after the first NCCL operation, and
+a test that only checks a global total passes when a single rank is healthy and the rest are
+silent. See <a href="../profiles/#coverage">Hardware Profiles</a> for how coverage is declared.</p>
+<p><code>test_profiles.py</code> validates the profiles themselves and needs no hardware.</p>
 <h3 id="expected-metrics">Expected Metrics<a class="headerlink" href="#expected-metrics" title="Permanent link">#</a></h3>
 <p>The tests validate that the following metrics are exported to Prometheus (defined in <code>telemetry.cc</code>):</p>
 <h4 id="collective-metrics">Collective Metrics<a class="headerlink" href="#collective-metrics" title="Permanent link">#</a></h4>
@@ -1642,6 +1700,8 @@ A single GPU will not produce NCCL metrics.</p>
 <li><code>nccl_profiler_transfer_size_bytes_sum</code> - Transfer sizes per channel</li>
 </ul>
 <h3 id="environment-variables">Environment Variables<a class="headerlink" href="#environment-variables" title="Permanent link">#</a></h3>
+<p>Endpoints default to the values in the active <a href="../profiles/">hardware profile</a>; these variables
+override them.</p>
 <table>
 <thead>
 <tr>

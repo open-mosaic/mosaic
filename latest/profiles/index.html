@@ -8,13 +8,13 @@
       
       
       
-        <link rel="canonical" href="https://openmosaic.ai/latest/release/">
+        <link rel="canonical" href="https://openmosaic.ai/latest/profiles/">
       
       
-        <link rel="prev" href="../fault-playbook/">
+        <link rel="prev" href="../testsuite/">
       
       
-        <link rel="next" href="../contribution/">
+        <link rel="next" href="../fault-playbook/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>Release - Open Mosaic</title>
+        <title>Hardware Profiles - Open Mosaic</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-process" class="md-skip">
+        <a href="#hardware-profiles" class="md-skip">
           Skip to content
         </a>
       
@@ -117,7 +117,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Release
+              Hardware Profiles
             
           </span>
         </div>
@@ -722,10 +722,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../profiles/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M32 64C14.3 64 0 78.3 0 96s14.3 32 32 32h86.7c12.3 28.3 40.5 48 73.3 48s61-19.7 73.3-48H480c17.7 0 32-14.3 32-32s-14.3-32-32-32H265.3C253 35.7 224.8 16 192 16s-61 19.7-73.3 48zm0 160c-17.7 0-32 14.3-32 32s14.3 32 32 32h246.7c12.3 28.3 40.5 48 73.3 48s61-19.7 73.3-48H480c17.7 0 32-14.3 32-32s-14.3-32-32-32h-54.7c-12.3-28.3-40.5-48-73.3-48s-61 19.7-73.3 48zm0 160c-17.7 0-32 14.3-32 32s14.3 32 32 32h54.7c12.3 28.3 40.5 48 73.3 48s61-19.7 73.3-48H480c17.7 0 32-14.3 32-32s-14.3-32-32-32H233.3c-12.3-28.3-40.5-48-73.3-48s-61 19.7-73.3 48z"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+    Hardware Profiles
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -743,6 +770,163 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#hardware-profiles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Hardware Profiles
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Hardware Profiles">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#which-profiles-ship-here" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Which profiles ship here
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#selecting-a-profile" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Selecting a profile
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Schema
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Schema">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#benchmark-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Benchmark options
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#coverage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Coverage
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Coverage">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#reading-coverage-from-a-running-cluster" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading coverage from a running cluster
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cross-node-traffic-needs-a-pool-that-spans-machines" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cross-node traffic needs a pool that spans machines
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#externally-deployed-clusters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Externally deployed clusters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#querying-profiles-from-other-tooling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Querying profiles from other tooling
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#validating-profiles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validating profiles
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -782,37 +966,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M64 96c0-35.3 28.7-64 64-64h288c35.3 0 64 28.7 64 64v32h50.7c17 0 33.3 6.7 45.3 18.7l45.3 45.3c12 12 18.7 28.3 18.7 45.3V384c0 35.3-28.7 64-64 64h-3.3c-10.4 36.9-44.4 64-84.7 64s-74.2-27.1-84.7-64H300.7c-10.4 36.9-44.4 64-84.7 64s-74.2-27.1-84.7-64H128c-35.3 0-64-28.7-64-64v-48H24c-13.3 0-24-10.7-24-24s10.7-24 24-24h112c13.3 0 24-10.7 24-24s-10.7-24-24-24H24c-13.3 0-24-10.7-24-24s10.7-24 24-24h176c13.3 0 24-10.7 24-24s-10.7-24-24-24H24c-13.3 0-24-10.7-24-24s10.7-24 24-24zm512 192v-50.7L530.7 192H480v96zM256 424a40 40 0 1 0-80 0 40 40 0 1 0 80 0m232 40a40 40 0 1 0 0-80 40 40 0 1 0 0 80"/></svg>
-  
-  <span class="md-ellipsis">
-    
-  
-    Release
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../release/" class="md-nav__link">
         
   
   
@@ -830,46 +987,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#release-process" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Release process
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#release-artifacts" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Release artifacts
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1058,24 +1175,141 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#release-process" class="md-nav__link">
+  <a href="#hardware-profiles" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Release process
+        Hardware Profiles
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Hardware Profiles">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#which-profiles-ship-here" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Which profiles ship here
       
     </span>
   </a>
   
 </li>
-      
-        <li class="md-nav__item">
-  <a href="#release-artifacts" class="md-nav__link">
+        
+          <li class="md-nav__item">
+  <a href="#selecting-a-profile" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Release artifacts
+        Selecting a profile
       
     </span>
   </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Schema
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Schema">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#benchmark-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Benchmark options
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#coverage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Coverage
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Coverage">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#reading-coverage-from-a-running-cluster" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading coverage from a running cluster
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cross-node-traffic-needs-a-pool-that-spans-machines" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cross-node traffic needs a pool that spans machines
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#externally-deployed-clusters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Externally deployed clusters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#querying-profiles-from-other-tooling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Querying profiles from other tooling
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#validating-profiles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validating profiles
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1096,75 +1330,175 @@
 
 
 
-  <h1>Release</h1>
+  <h1>Hardware Profiles</h1>
 
 <!--
 SPDX-FileCopyrightText: 2025 Delos Data Inc
 SPDX-License-Identifier: Apache-2.0
 -->
 
-<h3 id="release-process">Release process<a class="headerlink" href="#release-process" title="Permanent link">#</a></h3>
-<p>Releases follow this workflow:</p>
-<ol>
-<li>
-<p><strong>Decide to release</strong> — Maintainers decide when to cut a new release.</p>
-</li>
-<li>
-<p><strong>Validate</strong> — Ensure all of the following pass:</p>
-<ul>
-<li>Unit tests</li>
-<li>Security checks</li>
-<li>System validation</li>
-</ul>
-</li>
-<li>
-<p><strong>Create a version tag</strong> — Create a new Git tag that follows <a href="https://semver.org/">Semantic Versioning 2.0.0</a> (SemVer):</p>
-<ul>
-<li><strong>MAJOR</strong> version when making incompatible API changes</li>
-<li><strong>MINOR</strong> version when adding functionality in a backward compatible manner</li>
-<li><strong>PATCH</strong> version when making backward compatible bug fixes</li>
-</ul>
-<p>Version format: <code>MAJOR.MINOR.PATCH</code> (e.g. <code>1.2.3</code>). Pre-release and build metadata may be used as extensions to this format.</p>
-</li>
-<li>
-<p><strong>Draft release</strong> — Pushing the tag triggers a GitHub workflow that creates a <strong>draft release</strong> on GitHub.</p>
-</li>
-<li>
-<p><strong>Review and edit</strong> — Review the draft release on GitHub and edit release notes or details as needed.</p>
-</li>
-<li>
-<p><strong>Publish</strong> — Publish the release on GitHub to make it official.</p>
-</li>
-</ol>
-<h3 id="release-artifacts">Release artifacts<a class="headerlink" href="#release-artifacts" title="Permanent link">#</a></h3>
-<p>Published artifacts are available as Docker images on <a href="https://hub.docker.com/">Docker Hub</a> under the <strong>openmosaic</strong> organization.</p>
+<h2 id="hardware-profiles">Hardware Profiles<a class="headerlink" href="#hardware-profiles" title="Permanent link">#</a></h2>
+<p>A profile is a single YAML file describing one hardware configuration: the machines and GPUs it
+runs on, the serving topology, the load to drive, and the profiler coverage to expect back. The
+filename stem is the profile name.</p>
+<p>Profiles exist because the <a href="../testsuite/">profiler OTEL suite</a> has to run unchanged against
+everything from a two-GPU CI machine to a ninety-six-GPU disaggregated cluster. The load, the
+timeouts and the number of reporting ranks differ by orders of magnitude between them, and none
+of that belongs in the test code.</p>
+<p>They live in <code>tests/suites/profiler_otel/profiles/</code>.</p>
+<h3 id="which-profiles-ship-here">Which profiles ship here<a class="headerlink" href="#which-profiles-ship-here" title="Permanent link">#</a></h3>
+<p>Only <code>default</code> — the configuration continuous integration runs, matching
+<code>deployments/docker-compose-vllm.yml</code>. It is selected when no profile is named, so nothing has
+to pass arguments for the common case.</p>
+<p>Other tiers are maintained alongside the environment that runs them, together with that
+environment's own deployment configuration, and are supplied at run time with <code>--profile-dir</code>.
+Keeping them out of this repository avoids publishing internal cluster topology, and lets each
+environment change its own configuration without a change here.</p>
+<h3 id="selecting-a-profile">Selecting a profile<a class="headerlink" href="#selecting-a-profile" title="Permanent link">#</a></h3>
+<div class="language-bash highlight"><span class="filename">Against the stack this repository brings up</span><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>make<span class="w"> </span><span class="nb">test</span>
+</span></code></pre></div>
+<div class="language-bash highlight"><span class="filename">With profiles supplied from elsewhere</span><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>uv<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span>--workload-profile<span class="w"> </span>internal<span class="w"> </span>--profile-dir<span class="w"> </span>/path/to/your/profiles
+</span></code></pre></div>
+<p><code>--profile-dir</code> is repeatable and searched after the built-in directory, so a supplied profile
+may also override one shipped here. An unknown name fails immediately and lists the names it
+did find.</p>
+<p>Paths inside a profile resolve relative to <strong>that profile's own directory</strong>, so a profile and
+the deployment configuration it refers to can be moved into another repository together.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Profile selection is a command-line option rather than an environment variable, so a value
+left set in a shell cannot silently change a later run.</p>
+</div>
+<h3 id="schema">Schema<a class="headerlink" href="#schema" title="Permanent link">#</a></h3>
 <table>
 <thead>
 <tr>
-<th>Image</th>
-<th>Description</th>
+<th>Key</th>
+<th>Meaning</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>openmosaic/mosaic-vllm</code></td>
-<td>vLLM container with the Open Mosaic NCCL profiler plugin.</td>
+<td><code>description</code></td>
+<td>One line, printed at the start of a run</td>
 </tr>
 <tr>
-<td><code>openmosaic/mosaic-gpu-pcie-exporter</code></td>
-<td>Prometheus exporter for GPU-to-PCIe port mapping. Discovers GPUs via <code>nvidia-smi</code> (NVIDIA) or <code>rocm-smi</code> (AMD) and exposes metrics with host, gpu_id, gpu_uuid, pcie_port, and vendor. See <a href="https://github.com/open-mosaic/mosaic/blob/main/deployments/gpu_pcie_exporter/README.md">GPU PCIe Exporter</a> for build, run, and configuration details.</td>
+<td><code>hardware</code></td>
+<td><code>machines</code>, <code>gpus_per_machine</code>, <code>sku</code>. Documentation, and the upper bound <code>coverage</code> is validated against</td>
 </tr>
 <tr>
-<td><code>openmosaic/pipeline-analyzer</code></td>
-<td>Pipeline analysis for the NCCL profiler: analyses Prometheus metrics to identify pipeline parallelism structure and how communicators form pipeline stages. See <a href="https://github.com/open-mosaic/mosaic/blob/main/deployments/pipeline-analyzer/analyze_pipelines.py">Pipeline Analyzer</a> for behavior and usage.</td>
+<td><code>serving</code></td>
+<td><code>mode</code> (<code>aggregated</code> or <code>disaggregated</code>), <code>model</code>, and the parallelism. A disaggregated profile adds <code>prefill</code> and <code>decode</code> blocks</td>
+</tr>
+<tr>
+<td><code>deployment</code></td>
+<td>Exactly one of <code>compose_file</code> (this suite brings the stack up) or <code>external: true</code> (stood up out of band)</td>
+</tr>
+<tr>
+<td><code>endpoint</code></td>
+<td>Either <code>host</code> and <code>port</code>, or <code>base_url</code> for a single frontend</td>
+</tr>
+<tr>
+<td><code>otel_endpoint</code></td>
+<td>Where profiler telemetry is sent</td>
+</tr>
+<tr>
+<td><code>coverage</code></td>
+<td>The <code>hosts</code>, <code>ranks</code> and <code>communicators</code> the profiler must report from</td>
+</tr>
+<tr>
+<td><code>timeouts</code></td>
+<td><code>workload</code>, <code>metrics_available</code> and <code>quiesce</code>, in seconds</td>
+</tr>
+<tr>
+<td><code>expected_metrics</code></td>
+<td>Names a metric list defined in the suite's <code>conftest.py</code></td>
+</tr>
+<tr>
+<td><code>benchmark_options</code></td>
+<td>Passed verbatim to the benchmark workload</td>
 </tr>
 </tbody>
 </table>
-<p>Example (replace <code>1.0.0</code> with the desired version):</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>docker<span class="w"> </span>pull<span class="w"> </span>openmosaic/mosaic-vllm:1.0.0
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>docker<span class="w"> </span>pull<span class="w"> </span>openmosaic/mosaic-gpu-pcie-exporter:1.0.0
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>docker<span class="w"> </span>pull<span class="w"> </span>openmosaic/pipeline-analyzer:1.0.0
+<h4 id="benchmark-options">Benchmark options<a class="headerlink" href="#benchmark-options" title="Permanent link">#</a></h4>
+<p>Keys in <code>benchmark_options</code> become <code>benchmark_serving.py</code> flags by the usual conventions:
+<code>num_prompts: 64</code> becomes <code>--num-prompts 64</code>, <code>ignore_eos: true</code> becomes <code>--ignore-eos</code>, and a
+value of <code>None</code> omits the flag entirely. Nothing enumerates the arguments that script accepts,
+so any flag it supports can be set from a profile without a code change.</p>
+<p>Omitting a flag is how a profile drops a default it does not want. A cluster reached through a
+single frontend sets <code>base_url</code> and clears the host and port:</p>
+<div class="language-yaml highlight"><span class="filename">Targeting one frontend instead of a host and port</span><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">endpoint</span><span class="p">:</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">base_url</span><span class="p">:</span><span class="w"> </span><span class="s">"http://frontend:8000"</span>
 </span></code></pre></div>
+<h3 id="coverage">Coverage<a class="headerlink" href="#coverage" title="Permanent link">#</a></h3>
+<p><code>coverage</code> is what the assertions check: how many hosts, ranks and communicators must actually
+report telemetry during a run.</p>
+<p>It is declared rather than calculated from <code>hardware</code>. On a disaggregated cluster the prefill
+and decode pools can differ in size, and a machine may host only a frontend or a router with no
+GPU ranks at all, so <code>machines</code> multiplied by <code>gpus_per_machine</code> is the wrong answer. The
+<code>hardware</code> block stays as documentation and as a sanity bound.</p>
+<p><code>communicators</code> matters because prefill and decode form <strong>separate NCCL communicators</strong>. A total
+summed across every series rises when only one pool is alive, so requiring more than one is what
+catches a dead decode pool.</p>
+<h4 id="reading-coverage-from-a-running-cluster">Reading coverage from a running cluster<a class="headerlink" href="#reading-coverage-from-a-running-cluster" title="Permanent link">#</a></h4>
+<p>Rather than predicting the numbers, run once and read them back. The profiler labels every
+series with <code>hostname</code>, <code>rank</code>, <code>local_rank</code> and <code>communicator</code>:</p>
+<div class="language-text highlight"><span class="filename">Prometheus queries</span><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>sum by (hostname) (nccl_profiler_collective_bytes_total)
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>sum by (hostname, rank) (nccl_profiler_collective_bytes_total)
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>sum by (communicator) (nccl_profiler_collective_bytes_total)
+</span></code></pre></div>
+<h4 id="cross-node-traffic-needs-a-pool-that-spans-machines">Cross-node traffic needs a pool that spans machines<a class="headerlink" href="#cross-node-traffic-needs-a-pool-that-spans-machines" title="Permanent link">#</a></h4>
+<p>A worker pool pinned to one machine produces no cross-node NCCL. Every collective stays inside
+the node, and the only traffic between machines is the key-value cache transfer, which the
+transfer backend handles outside NCCL and the profiler therefore never observes.</p>
+<p>A profile spanning several machines whose pools each sit on one machine will report more hosts
+and no new NCCL behaviour. Use wide expert parallelism, or a tensor-parallel group that straddles
+machines, when cross-node traffic is the point of the tier.</p>
+<h3 id="externally-deployed-clusters">Externally deployed clusters<a class="headerlink" href="#externally-deployed-clusters" title="Permanent link">#</a></h3>
+<p>A profile with <code>external: true</code> names no deployment configuration; the serving cluster and the
+observability stack are expected to be running already.</p>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>Every machine in a multi-machine tier must reach the same collector. The address used by the
+single-machine configuration is the Docker bridge gateway, which is reachable only from the
+host it runs on. A profile that leaves it unchanged reports no telemetry at all, which looks
+exactly like a broken profiler. Confirm <code>otel_endpoint</code> is reachable from every machine
+before reading anything into a failing run.</p>
+</div>
+<h3 id="querying-profiles-from-other-tooling">Querying profiles from other tooling<a class="headerlink" href="#querying-profiles-from-other-tooling" title="Permanent link">#</a></h3>
+<p>If your environment drives its own deployment, these avoid re-implementing profile parsing and
+path resolution:</p>
+<div class="language-bash highlight"><span class="filename">Query the profiles on a search path</span><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>python<span class="w"> </span>-m<span class="w"> </span>profiler_otel.profiles<span class="w"> </span>list<span class="w"> </span><span class="o">[</span>--profile-dir<span class="w"> </span>DIR<span class="w"> </span>...<span class="o">]</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>python<span class="w"> </span>-m<span class="w"> </span>profiler_otel.profiles<span class="w"> </span>compose-file<span class="w"> </span>NAME<span class="w"> </span><span class="o">[</span>--profile-dir<span class="w"> </span>DIR<span class="w"> </span>...<span class="o">]</span>
+</span></code></pre></div>
+<p><code>compose-file</code> prints an absolute path, or nothing at all with a zero exit status when the
+profile is externally deployed — so empty output means there is nothing to bring up. An unknown
+profile exits non-zero and writes to standard error, so it cannot be mistaken for that case.</p>
+<h3 id="validating-profiles">Validating profiles<a class="headerlink" href="#validating-profiles" title="Permanent link">#</a></h3>
+<p>Profiles are parsed into pydantic models, so a malformed one fails when it loads rather than
+part-way through a run. Validation needs no hardware:</p>
+<div class="language-bash highlight"><span class="filename">Validate a directory of profiles</span><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>uv<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span>profiler_otel/test_profiles.py<span class="w"> </span>--profile-dir<span class="w"> </span>/path/to/your/profiles
+</span></code></pre></div>
+<p>Errors name the profile and the field path, for example
+<code>coverage.ranks: 99 exceeds the 16 GPUs the hardware provides</code>. What is checked:</p>
+<ul>
+<li><strong>Unknown keys are rejected.</strong> A misspelled key would otherwise be ignored and leave the
+  setting it was meant to change at its default.</li>
+<li><strong>Types and ranges.</strong> Counts and timeouts must be positive; a port must be a valid port.</li>
+<li><strong><code>coverage</code> must be satisfiable</strong> by the machines and GPUs in <code>hardware</code>.</li>
+<li><strong><code>deployment</code> names exactly one source</strong>, <code>compose_file</code> or <code>external</code>.</li>
+<li><strong><code>endpoint</code> is one form or the other</strong>, a host and port or a <code>base_url</code>.</li>
+<li><strong>Worker pools match the serving mode.</strong> A disaggregated profile declares both <code>prefill</code> and
+  <code>decode</code>; an aggregated one declares neither.</li>
+<li><strong><code>expected_metrics</code> names a list that exists.</strong></li>
+<li><strong>The compose path resolves</strong> to a file that is really there, relative to the profile.</li>
+</ul>
+<p>Running this against a directory of profiles kept elsewhere gives that directory the same
+checks, in a repository whose own tests may never run this suite.</p>
+<p><code>tests/suites/profiler_otel/testdata/profiles/</code> holds synthetic profiles used only by those
+tests. They cover shapes this repository supports but no longer ships a profile for, such as
+external deployments and multi-machine coverage. They are deliberately not on the default search
+path and cannot be selected by an ordinary run.</p>
 
 
 
