@@ -109,6 +109,7 @@ nav:
   - Validation:
     - Validation: validation.md
     - Test Suites: testsuite.md
+    - Hardware Profiles: profiles.md
     - Fault Playbook: fault-playbook.md
     - Release: release.md
   - Community:
