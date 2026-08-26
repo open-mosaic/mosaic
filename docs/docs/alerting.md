@@ -17,19 +17,21 @@ for a human-monitored cluster, and they are also what triggers the
 
 ## Treat these as a starting point
 
-The alert carries nothing. Kowalski takes the title for the banner, and the agent investigates
-from scratch regardless of which rule fired. Any rule that reliably says something is wrong
-will drive it, so change the expressions, retune the thresholds, or write your own for faults
-specific to your hardware.
+Nothing from the alert payload reaches the agent. Kowalski takes the rule title for posting the
+alert to the user and discards the rest, then runs the same investigation whatever fired it,
+querying Prometheus from scratch. These three are examples, built to give Kowalski something to
+react to. Any rule that reliably says something is wrong will trigger it, so change the
+expressions, retune the thresholds, or write your own for faults specific to your hardware,
+following the [Grafana alerting documentation](https://grafana.com/docs/grafana/latest/alerting/).
 
 What is worth keeping is the shape. Two of the three compare the cluster against itself. A
 threshold like "alert below 60 MB/s" only works on the cluster it was measured on; a ratio
 between a recent window and an older one asks whether things got worse, which you can ask
 anywhere.
 
-They are not shipped as importable files. Datasource UIDs, folder names and org IDs are
-specific to one Grafana, so an imported copy of someone else's alerts is either broken or wrong
-for your cluster. Build them from what follows. It takes a few minutes.
+The rules and the contact point are in `tests/mosaic-detective/grafana/`, ready to drop into
+`/etc/grafana/provisioning/alerting/`. The thresholds in them came from the reference cluster
+and are the part you have to set yourself.
 
 ## Rule 1: throughput degradation
 
@@ -65,15 +67,16 @@ This comes from DCGM rather than the profiler, and that is the point: on a netwo
 cluster a clock clamp barely moves throughput, so the profiler cannot see it.
 
 One failure mode worth guarding. With no workload running the clocks idle at different rates
-and the ratio spikes, so the rule fires on every startup and shutdown. Add a floor:
+and the ratio spikes, so the rule fires on every startup and shutdown. The provisioned rule
+guards against this with a floor:
 
 ```promql
 (max(DCGM_FI_DEV_SM_CLOCK) / min(DCGM_FI_DEV_SM_CLOCK))
   and on() (min(DCGM_FI_DEV_SM_CLOCK) > 500)
 ```
 
-A pending period of `30s` is also worth setting, so a single unlucky evaluation during a job
-transition does not fire.
+It also uses a pending period of `30s`, so a single unlucky evaluation during a job transition
+does not fire.
 
 ## Rule 3: collector down
 
@@ -132,9 +135,12 @@ denominator both fall to zero and the ratio is undefined rather than low. With `
 to `NoData` that stays quiet. Test it on your own setup and decide whether you want a separate
 rule.
 
-**File-provisioned rules are read-only in the UI.** You cannot tune a threshold you provisioned
-from a file, which makes calibration awkward. Build them in the UI, tune them, then export.
+**Provisioned rules are read-only in the UI.** Alerting provisioning is also not re-read from
+disk on an interval the way dashboard provisioning is, so a changed file needs a Grafana restart
+or `POST /api/admin/provisioning/alerting/reload`. That only bites during calibration, when you
+want to nudge a number and watch the effect; build the rules in the UI first if you would rather
+tune them interactively, then export and provision from the result.
 
-Alert definitions live in Grafana's database and go with the volume, so keep that export outside
-the cluster and redo it after any change. A stale export is worse than none, because you will
-trust it.
+Rules built in the UI live in Grafana's database and go with the volume, so keep an export
+outside the cluster and redo it after any change. A stale export is worse than none, because you
+will trust it.
