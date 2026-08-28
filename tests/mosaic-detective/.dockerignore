@@ -6,5 +6,4 @@ venv
 __pycache__
 *.pyc
 tests/
-reports/
 grafana/

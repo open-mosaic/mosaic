@@ -458,12 +458,15 @@ message length caps, and in how long content is best delivered. Each needs its o
 Transport is not a problem. Posting needs no inbound connectivity, and platforms offering an
 outbound WebSocket mode for interactive features can be driven from behind a firewall.
 
-## Open questions
+## Future improvements
 
-- Where should the line sit between wrapper only access and open queries?
-- Can anything separate a throttle induced abort from a deliberate rank kill? It needs the
-  pre-abort trajectory, which snapshot based tooling discards.
-- Does any of this survive a compute bound cluster or a real fabric? Every "invisible to the
-  profiler" finding may reverse.
-- What does the agent do with a fault type it has never seen?
 - Historical and offset queries are the obvious next tooling gap.
+- An MCP server instead of wrapper scripts, giving the agent a typed tool surface rather than
+  a shell command per verb.
+- Very basic write access, so the agent can act on a diagnosis rather than only report it -
+restarting a rank or a node being the obvious first case.
+- Widening the line between wrapper only access and open queries, so the agent can ask
+  questions the wrappers do not anticipate.
+- Separating a throttle induced abort from a deliberate rank kill. It needs the pre-abort
+  trajectory, which snapshot based tooling discards.
+- Handling a fault type the agent has never seen.
