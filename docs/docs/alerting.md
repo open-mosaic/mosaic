@@ -94,7 +94,7 @@ A pending period of `30s` avoids firing on a scrape blip.
 
 ## Choosing your thresholds
 
-The numbers above came from a two node, four GPU cluster on 1 GbE. Run your workload with
+The numbers above were derived from a two node, four GPU cluster connected by 1 GbE front-end network. Run your workload with
 nothing injected for half an hour and watch what healthy does:
 
 - Throughput: watch the ratio expression itself. It should sit near 1.0. Set the threshold
