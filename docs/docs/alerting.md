@@ -125,7 +125,7 @@ Group interval does the same job as the detective's own cooldown, which also def
 minutes. Sending to a human, tune this one. Sending to the detective, either suppresses the
 repeats and you only need to think about one.
 
-The contact point is covered in [Fault Detective](mosaic-detective.md). Address the receiver by
+The contact point is covered in [Fault Detective Deployment](mosaic-detective-deployment.md). Address the receiver by
 container name, not by IP, and use the **Test** button.
 
 ## Two things to know
