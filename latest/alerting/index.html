@@ -8,13 +8,13 @@
       
       
       
-        <link rel="canonical" href="https://openmosaic.ai/latest/validation/">
+        <link rel="canonical" href="https://openmosaic.ai/latest/alerting/">
       
       
-        <link rel="prev" href="../troubleshoot/">
+        <link rel="prev" href="../fault-playbook/">
       
       
-        <link rel="next" href="../testsuite/">
+        <link rel="next" href="../mosaic-detective/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>Validation - Open Mosaic</title>
+        <title>Grafana Alerting - Open Mosaic</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#test-strategy" class="md-skip">
+        <a href="#grafana-alerting" class="md-skip">
           Skip to content
         </a>
       
@@ -117,7 +117,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Validation
+              Grafana Alerting
             
           </span>
         </div>
@@ -662,37 +662,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M256 512a256 256 0 1 1 0-512 256 256 0 1 1 0 512m118-366.3c-10.7-7.8-25.7-5.4-33.5 5.3L221.1 315.2 169 263.1c-9.4-9.4-24.6-9.4-33.9 0s-9.4 24.6 0 33.9l72 72c5 5 11.8 7.5 18.8 7s13.4-4.1 17.5-9.8l135.9-187c7.8-10.7 5.4-25.7-5.3-33.5"/></svg>
-  
-  <span class="md-ellipsis">
-    
-  
-    Validation
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../validation/" class="md-nav__link">
         
   
   
@@ -710,130 +683,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#test-strategy" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Test Strategy
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Test Strategy">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#unit-tests" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Unit Tests
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#integration-tests" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Integration Tests
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#run-tests" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Run tests
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Run tests">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#unit-tests_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Unit Tests
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#integration-tests_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Integration Tests
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Integration Tests">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#prerequisites" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Prerequisites
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#integration-test-commands" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Integration test commands
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -933,10 +782,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../alerting/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M224 0c-17.7 0-32 14.3-32 32v3.2C119 50 64 114.6 64 192v21.7c0 48.1-16.4 94.8-46.4 132.4l-9.8 12.2C2.7 364.6 0 372.4 0 380.5 0 400.1 15.9 416 35.5 416h376.9c19.6 0 35.5-15.9 35.5-35.5 0-8.1-2.7-15.9-7.8-22.2l-9.8-12.2c-29.9-37.6-46.3-84.3-46.3-132.4V192c0-77.4-55-142-128-156.8V32c0-17.7-14.3-32-32-32m-62 464c7.1 27.6 32.2 48 62 48s54.9-20.4 62-48z"/></svg>
+  
+  <span class="md-ellipsis">
+    
+  
+    Grafana Alerting
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -954,6 +830,118 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#grafana-alerting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Grafana alerting
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Grafana alerting">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#treat-these-as-a-starting-point" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Treat these as a starting point
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rule-1-throughput-degradation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rule 1: throughput degradation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rule-2-gpu-clock-divergence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rule 2: GPU clock divergence
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rule-3-collector-down" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rule 3: collector down
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#choosing-your-thresholds" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choosing your thresholds
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#evaluation-and-delivery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Evaluation and delivery
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#two-things-to-know" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Two things to know
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1232,22 +1220,22 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#test-strategy" class="md-nav__link">
+  <a href="#grafana-alerting" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Test Strategy
+        Grafana alerting
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Test Strategy">
+    <nav class="md-nav" aria-label="Grafana alerting">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#unit-tests" class="md-nav__link">
+  <a href="#treat-these-as-a-starting-point" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Unit Tests
+        Treat these as a starting point
       
     </span>
   </a>
@@ -1255,38 +1243,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#integration-tests" class="md-nav__link">
+  <a href="#rule-1-throughput-degradation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Integration Tests
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#run-tests" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Run tests
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Run tests">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#unit-tests_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Unit Tests
+        Rule 1: throughput degradation
       
     </span>
   </a>
@@ -1294,22 +1254,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#integration-tests_1" class="md-nav__link">
+  <a href="#rule-2-gpu-clock-divergence" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Integration Tests
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Integration Tests">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#prerequisites" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Prerequisites
+        Rule 2: GPU clock divergence
       
     </span>
   </a>
@@ -1317,18 +1265,46 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#integration-test-commands" class="md-nav__link">
+  <a href="#rule-3-collector-down" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Integration test commands
+        Rule 3: collector down
       
     </span>
   </a>
   
 </li>
         
-      </ul>
-    </nav>
+          <li class="md-nav__item">
+  <a href="#choosing-your-thresholds" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choosing your thresholds
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#evaluation-and-delivery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Evaluation and delivery
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#two-things-to-know" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Two things to know
+      
+    </span>
+  </a>
   
 </li>
         
@@ -1354,108 +1330,126 @@
 
 
 
-  <h1>Validation</h1>
+  <h1>Grafana Alerting</h1>
 
 <!--
 SPDX-FileCopyrightText: 2025 Delos Data Inc
 SPDX-License-Identifier: Apache-2.0
 -->
 
-<h2 id="test-strategy">Test Strategy<a class="headerlink" href="#test-strategy" title="Permanent link">#</a></h2>
-<p>Mosaic uses a <strong>layered test strategy</strong> to balance fast developer feedback with end-to-end confidence. We separate <strong>unit tests</strong> (fast, GPU-free) from <strong>integration tests</strong> (real deployment, GPU-required).</p>
-<h3 id="unit-tests">Unit Tests<a class="headerlink" href="#unit-tests" title="Permanent link">#</a></h3>
-<p>Unit tests act as <strong>merge guardrails</strong> and do not require GPUs.</p>
-<div class="tabbed-set tabbed-alternate" data-tabs="1:3"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><input id="__tabbed_1_3" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">What</label><label for="__tabbed_1_2">When</label><label for="__tabbed_1_3">Where</label></div>
-<div class="tabbed-content">
-<div class="tabbed-block">
-<ul>
-<li>Profiler plugin builds and passes unit tests (<code>gtest</code>)</li>
-<li>Container images builds</li>
-<li>Code quality checks<ul>
-<li>Formatting (<code>clang-format</code>)</li>
-<li>License headers (<code>reuse</code>)</li>
-</ul>
-</li>
-</ul>
-</div>
-<div class="tabbed-block">
-<ul>
-<li>Every pull request</li>
-<li>Every commit to <code>main</code></li>
-</ul>
-</div>
-<div class="tabbed-block">
-<ul>
-<li>Standard GitHub runners (no GPU required)</li>
-</ul>
-</div>
-</div>
-</div>
-<h3 id="integration-tests">Integration Tests<a class="headerlink" href="#integration-tests" title="Permanent link">#</a></h3>
-<p>Integration tests validate <strong>real-world, end-to-end behavior</strong>.</p>
-<p><strong>Initial focus</strong>: Minimal 2-GPU setup with NVIDIA GPUs</p>
-<div class="tabbed-set tabbed-alternate" data-tabs="2:3"><input checked="checked" id="__tabbed_2_1" name="__tabbed_2" type="radio" /><input id="__tabbed_2_2" name="__tabbed_2" type="radio" /><input id="__tabbed_2_3" name="__tabbed_2" type="radio" /><div class="tabbed-labels"><label for="__tabbed_2_1">What</label><label for="__tabbed_2_2">When</label><label for="__tabbed_2_3">Where</label></div>
-<div class="tabbed-content">
-<div class="tabbed-block">
-<ul>
-<li>Provision the test environment on the self-hosted GPU runner</li>
-<li>Deploy Mosaic observability stack (LGTM + dashboards) with Docker compose</li>
-<li>Run a reference workload (vLLM + profiler plugin) with Docker compose</li>
-<li>Verify metrics are emitted from profiler plugin and received by LGTM stack
-    <div class="language-bash highlight"><span class="filename">Query should return positive array size</span><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nv">MIMIR_IP</span><span class="o">=</span><span class="s2">"x.x.x.x"</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nv">NOW</span><span class="o">=</span><span class="k">$(</span>date<span class="w"> </span>+%s<span class="k">)</span>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="nv">METRIC</span><span class="o">=</span><span class="s2">"nccl_profiler_collective_count_sum"</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>curl<span class="w"> </span>-s<span class="w"> </span><span class="s2">"http://</span><span class="si">${</span><span class="nv">MIMIR_IP</span><span class="si">}</span><span class="s2">:9090/api/v1/query_range?"</span><span class="se">\</span>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="s2">"query=</span><span class="si">${</span><span class="nv">METRIC</span><span class="si">}</span><span class="s2">&amp;start=</span><span class="k">$((</span><span class="nv">NOW</span><span class="o">-</span><span class="m">30</span><span class="k">))</span><span class="s2">&amp;end=</span><span class="si">${</span><span class="nv">NOW</span><span class="si">}</span><span class="s2">&amp;step=15"</span><span class="w"> </span><span class="p">|</span><span class="se">\</span>
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>jq<span class="w"> </span><span class="s1">'.data.result | length'</span>
-</span></code></pre></div></li>
-</ul>
-</div>
-<div class="tabbed-block">
-<ul>
-<li>Nightly</li>
-<li>Pull request creation and update</li>
-</ul>
-</div>
-<div class="tabbed-block">
-<ul>
-<li>Self-hosted GPU runners (GPU and container runtime required)</li>
-</ul>
-</div>
-</div>
-</div>
-<h2 id="run-tests">Run tests<a class="headerlink" href="#run-tests" title="Permanent link">#</a></h2>
-<h3 id="unit-tests_1">Unit Tests<a class="headerlink" href="#unit-tests_1" title="Permanent link">#</a></h3>
-<div class="language-bash highlight"><span class="filename">Run profiler unit test</span><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>mkdir<span class="w"> </span>-p<span class="w"> </span>tests/build
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nb">cd</span><span class="w"> </span>tests/build
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>cmake<span class="w"> </span>..<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span>-DNCCL_PATH<span class="o">=</span><span class="nv">$NCCL_PATH</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span>-DGPU_PLATFORM<span class="o">=</span>AUTO<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">  </span>-DTRACE<span class="o">=</span>OFF
-</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>cmake<span class="w"> </span>--build<span class="w"> </span>.<span class="w"> </span>--parallel<span class="w"> </span><span class="k">$(</span>nproc<span class="k">)</span>
-</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>./nccl_profiler_otel_tests
+<h2 id="grafana-alerting">Grafana alerting<a class="headerlink" href="#grafana-alerting" title="Permanent link">#</a></h2>
+<p>Three alert rules cover the fault classes the profiler can see: throughput falling off, one
+GPU running slower than its peers, and the collector going away. They are useful on their own
+for a human-monitored cluster, and they are also what triggers the
+<a href="../mosaic-detective/">Fault Detective</a>.</p>
+<h3 id="treat-these-as-a-starting-point">Treat these as a starting point<a class="headerlink" href="#treat-these-as-a-starting-point" title="Permanent link">#</a></h3>
+<p>Nothing from the alert payload reaches the agent. Kowalski takes the rule title for posting the
+alert to the user and discards the rest, then runs the same investigation whatever fired it,
+querying Prometheus from scratch. These three are examples, built to give Kowalski something to
+react to. Any rule that reliably says something is wrong will trigger it, so change the
+expressions, retune the thresholds, or write your own for faults specific to your hardware,
+following the <a href="https://grafana.com/docs/grafana/latest/alerting/">Grafana alerting documentation</a>.</p>
+<p>What is worth keeping is the shape. Two of the three compare the cluster against itself. A
+threshold like "alert below 60 MB/s" only works on the cluster it was measured on; a ratio
+between a recent window and an older one asks whether things got worse, which you can ask
+anywhere.</p>
+<p>The rules and the contact point are in <code>tests/mosaic-detective/grafana/</code>, ready to drop into
+<code>/etc/grafana/provisioning/alerting/</code>. The thresholds in them came from the reference cluster
+and are the part you have to set yourself.</p>
+<h3 id="rule-1-throughput-degradation">Rule 1: throughput degradation<a class="headerlink" href="#rule-1-throughput-degradation" title="Permanent link">#</a></h3>
+<div class="language-promql highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">sum</span><span class="o">(</span><span class="kr">rate</span><span class="o">(</span><span class="nv">nccl_profiler_collective_bytes_total</span><span class="p">[</span><span class="s">30s</span><span class="p">]</span><span class="o">))</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="o">/</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="k">sum</span><span class="o">(</span><span class="kr">rate</span><span class="o">(</span><span class="nv">nccl_profiler_collective_bytes_total</span><span class="p">[</span><span class="s">20m</span><span class="p">]</span><span class="w"> </span><span class="k">offset</span><span class="w"> </span><span class="s">3m</span><span class="o">))</span>
 </span></code></pre></div>
-<h3 id="integration-tests_1">Integration Tests<a class="headerlink" href="#integration-tests_1" title="Permanent link">#</a></h3>
-<p>The integration tests validate the complete integration of all Open Mosaic components.
-They make use of the <a href="https://github.com/open-mosaic/production-test-framework">Production Test Framework</a> to control the test environment and provide python interfaces to system components.</p>
-<h4 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">#</a></h4>
+<p>Condition: below <code>0.85</code>. Pending period: <code>10s</code>.</p>
+<p>Recent throughput over the last 30 seconds, divided by a 20 minute baseline taken from before
+the fault would have started. The <code>offset 3m</code> matters. Without it a slow degradation drags the
+baseline down with it and the ratio never moves.</p>
+<p>This is the rule that catches network faults, and it is the one most worth tuning. A healthy
+cluster is not flat: collective batching produces regular oscillation, and on the reference
+cluster the healthy per-rank rate swings by roughly a third in normal operation. Set the
+threshold too close to 1.0 and that oscillation fires it.</p>
+<h3 id="rule-2-gpu-clock-divergence">Rule 2: GPU clock divergence<a class="headerlink" href="#rule-2-gpu-clock-divergence" title="Permanent link">#</a></h3>
+<div class="language-promql highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">max</span><span class="o">(</span><span class="nv">DCGM_FI_DEV_SM_CLOCK</span><span class="o">)</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="k">min</span><span class="o">(</span><span class="nv">DCGM_FI_DEV_SM_CLOCK</span><span class="o">)</span>
+</span></code></pre></div>
+<p>Condition: above <code>1.1</code>.</p>
+<p>The fastest GPU divided by the slowest. Under a synchronous collective every rank should clock
+similarly, so a persistent spread means one is throttling or clamped.</p>
+<p>This comes from DCGM rather than the profiler, and that is the point: on a network-bound
+cluster a clock clamp barely moves throughput, so the profiler cannot see it.</p>
+<p>One failure mode worth guarding. With no workload running the clocks idle at different rates
+and the ratio spikes, so the rule fires on every startup and shutdown. The provisioned rule
+guards against this with a floor:</p>
+<div class="language-promql highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="o">(</span><span class="k">max</span><span class="o">(</span><span class="nv">DCGM_FI_DEV_SM_CLOCK</span><span class="o">)</span><span class="w"> </span><span class="o">/</span><span class="w"> </span><span class="k">min</span><span class="o">(</span><span class="nv">DCGM_FI_DEV_SM_CLOCK</span><span class="o">))</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="ow">and</span><span class="w"> </span><span class="k">on</span><span class="o">()</span><span class="w"> </span><span class="o">(</span><span class="k">min</span><span class="o">(</span><span class="nv">DCGM_FI_DEV_SM_CLOCK</span><span class="o">)</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">500</span><span class="o">)</span>
+</span></code></pre></div>
+<p>It also uses a pending period of <code>30s</code>, so a single unlucky evaluation during a job transition
+does not fire.</p>
+<h3 id="rule-3-collector-down">Rule 3: collector down<a class="headerlink" href="#rule-3-collector-down" title="Permanent link">#</a></h3>
+<div class="language-promql highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nv">up</span><span class="p">{</span><span class="nl">job</span><span class="o">=</span><span class="p">"</span><span class="s">otel-collector</span><span class="p">"}</span>
+</span></code></pre></div>
+<p>Condition: below <code>1</code>.</p>
+<p>The simplest of the three, and it prevents the worst misdiagnosis. If the collector dies every
+profiler metric stops, which looks exactly like the cluster dying. Without this rule you cannot
+tell a broken cluster from a broken view of a healthy one.</p>
+<p>A pending period of <code>30s</code> avoids firing on a scrape blip.</p>
+<h3 id="choosing-your-thresholds">Choosing your thresholds<a class="headerlink" href="#choosing-your-thresholds" title="Permanent link">#</a></h3>
+<p>The numbers above were derived from a two node, four GPU cluster connected by 1 GbE front-end network. Run your workload with
+nothing injected for half an hour and watch what healthy does:</p>
 <ul>
-<li><strong>make</strong> — Required to run the Makefile targets.</li>
-<li><strong>Docker</strong> and <strong>Docker Compose</strong> — Required to run the stack and test container.</li>
-<li><strong>uv</strong> and <strong>Python</strong> - Required to run the pytest-based integration tests. </li>
+<li>Throughput: watch the ratio expression itself. It should sit near 1.0. Set the threshold
+  below the deepest healthy dip, with room to spare.</li>
+<li>Clocks: watch the max/min spread under load and set the threshold above it.</li>
+<li>Collector: nothing to calibrate. It is up or it is not.</li>
 </ul>
-<h4 id="integration-test-commands">Integration test commands<a class="headerlink" href="#integration-test-commands" title="Permanent link">#</a></h4>
-<div class="language-bash highlight"><span class="filename">Run the integration tests</span><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nb">cd</span><span class="w"> </span>tests
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="c1"># results are in JUnitXML and located at ${HOME}/tmp/mosaic/test_results.xml</span>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>make<span class="w"> </span><span class="nb">test</span>
-</span></code></pre></div>
-<div class="language-bash highlight"><span class="filename">Stand up the container stack without running tests</span><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>make<span class="w"> </span>setup
-</span></code></pre></div>
-<div class="language-bash highlight"><span class="filename">Run tests against an already running container stack</span><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>make<span class="w"> </span>run-tests
-</span></code></pre></div>
-<div class="language-bash highlight"><span class="filename">Shut down and clean up the container stack</span><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>make<span class="w"> </span>cleanup
-</span></code></pre></div>
+<p>You are looking for the variance, not the average. A single snapshot tells you nothing about
+how far healthy wanders.</p>
+<h3 id="evaluation-and-delivery">Evaluation and delivery<a class="headerlink" href="#evaluation-and-delivery" title="Permanent link">#</a></h3>
+<p>Put all three in one group. The reference setup uses <code>mosaic-10s</code> evaluating every <code>10s</code>, fast
+enough that detection latency comes from the scrape interval rather than from Grafana.</p>
+<p>Each rule routes straight to its contact point through its own notification settings, so you do
+not need a notification policy tree:</p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Value</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Group wait</td>
+<td><code>10s</code></td>
+<td>How long before the first notification is sent. The default is much longer</td>
+</tr>
+<tr>
+<td>Group interval</td>
+<td><code>3m</code></td>
+<td>Minimum gap between notifications for the same group</td>
+</tr>
+</tbody>
+</table>
+<p>Group wait is the one that catches people. Left at the default, an alert that has already fired
+takes minutes to arrive, which looks like the alert not working.</p>
+<p>Group interval does the same job as the detective's own cooldown, which also defaults to three
+minutes. Sending to a human, tune this one. Sending to the detective, either suppresses the
+repeats and you only need to think about one.</p>
+<p>The contact point is covered in <a href="../mosaic-detective-deployment/">Fault Detective Deployment</a>. Address the receiver by
+container name, not by IP, and use the <strong>Test</strong> button.</p>
+<h3 id="two-things-to-know">Two things to know<a class="headerlink" href="#two-things-to-know" title="Permanent link">#</a></h3>
+<p><strong>A workload that stops entirely may not alert.</strong> If the process exits, numerator and
+denominator both fall to zero and the ratio is undefined rather than low. With <code>noDataState</code> set
+to <code>NoData</code> that stays quiet. Test it on your own setup and decide whether you want a separate
+rule.</p>
+<p><strong>Provisioned rules are read-only in the UI.</strong> Alerting provisioning is also not re-read from
+disk on an interval the way dashboard provisioning is, so a changed file needs a Grafana restart
+or <code>POST /api/admin/provisioning/alerting/reload</code>. That only bites during calibration, when you
+want to nudge a number and watch the effect; build the rules in the UI first if you would rather
+tune them interactively, then export and provision from the result.</p>
+<p>Rules built in the UI live in Grafana's database and go with the volume, so keep an export
+outside the cluster and redo it after any change. A stale export is worse than none, because you
+will trust it.</p>
 
 
 
