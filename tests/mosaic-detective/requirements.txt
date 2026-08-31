@@ -1,0 +1,4 @@
+# SPDX-FileCopyrightText: 2025 Delos Data Inc
+# SPDX-License-Identifier: Apache-2.0
+discord.py>=2.0,<3
+requests>=2.28,<3

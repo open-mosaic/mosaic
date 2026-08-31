@@ -1,0 +1,9 @@
+# SPDX-FileCopyrightText: 2025 Delos Data Inc
+# SPDX-License-Identifier: Apache-2.0
+.env.local
+.venv
+venv
+__pycache__
+*.pyc
+tests/
+grafana/

@@ -111,6 +111,9 @@ nav:
     - Test Suites: testsuite.md
     - Hardware Profiles: profiles.md
     - Fault Playbook: fault-playbook.md
+    - Grafana Alerting: alerting.md
+    - Fault Detective: mosaic-detective.md
+    - Fault Detective Deployment: mosaic-detective-deployment.md
     - Release: release.md
   - Community:
     - How to Contribute: contribution.md

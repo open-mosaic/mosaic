@@ -12,7 +12,8 @@ path = [
     ".github/ISSUE_TEMPLATE/*.md",
     ".github/PULL_REQUEST_TEMPLATE.md",
     "tests/suites/uv.lock",
-    "docs/docs/images/fault-playbook/*.png"
+    "docs/docs/images/fault-playbook/*.png",
+    "tests/mosaic-detective/skill-settings.json"
 ]
 SPDX-FileCopyrightText = "2025 Delos Data Inc"
 SPDX-License-Identifier = "Apache-2.0"

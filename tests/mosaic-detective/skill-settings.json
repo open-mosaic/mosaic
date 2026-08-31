@@ -1,0 +1,11 @@
+{
+  "skillOverrides": {
+    "mosaic-detective": "on"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(python3 *)",
+      "Bash(python *)"
+    ]
+  }
+}
