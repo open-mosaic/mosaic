@@ -10,12 +10,18 @@ TESTS_DIR ?= $(MOSAIC_PATH)/tests/suites
 TEST_MARKER ?= "profiler_otel or dashboards"
 
 # Hardware profile to run against; see docs/docs/profiles.md ("Hardware Profiles").
-# Only 'default' ships here, and it is the configuration the compose files below bring up.
-# Other tiers live with the environments that run them and supply PROFILE_DIR.
+# The profile also decides which stack setup/cleanup deploy. Other tiers live with the
+# environments that run them and supply PROFILE_DIR.
 PROFILE ?= default
 # Extra directories of profile files, space separated.
 PROFILE_DIR ?=
-PROFILE_ARGS := --workload-profile $(PROFILE) $(foreach d,$(PROFILE_DIR),--profile-dir $(d))
+PROFILE_DIR_ARGS := $(foreach d,$(PROFILE_DIR),--profile-dir $(d))
+PROFILE_ARGS := --workload-profile $(PROFILE) $(PROFILE_DIR_ARGS)
+
+# The profile is what says which stack to deploy, so setup/cleanup ask it rather than naming
+# a compose file. `compose-file` prints an absolute path, or nothing at all with a zero exit
+# status when the profile is externally deployed. See docs/docs/profiles.md.
+PROFILES_CLI = cd $(TESTS_DIR) && uv run python -m profiler_otel.profiles
 
 FRAMEWORK_SERVICE_NAME ?= production-test-framework
 FRAMEWORK_CONTAINER_NAME ?= production-test-framework
@@ -39,14 +45,30 @@ check-uv:
 		exit 1; \
 	}
 
-# Start the container stack
-setup:
-	@echo "Starting container stack..."
-	docker compose -f $(MOSAIC_PATH)/deployments/docker-compose.yml -f $(MOSAIC_PATH)/deployments/docker-compose-vllm.yml up --wait -d --pull always
+# Start the container stack the selected profile describes. An externally deployed profile
+# expects the serving and observability stacks to be up already, so there is nothing to do.
+setup: check-uv
+	@set -e; \
+	VLLM_COMPOSE="$$($(PROFILES_CLI) compose-file $(PROFILE) $(PROFILE_DIR_ARGS))"; \
+	if [ -z "$$VLLM_COMPOSE" ]; then \
+		echo "Profile '$(PROFILE)' is externally deployed; nothing to bring up."; \
+		exit 0; \
+	fi; \
+	echo "Starting container stack for profile '$(PROFILE)'..."; \
+	set -a; eval "$$($(PROFILES_CLI) deployment-env $(PROFILE) $(PROFILE_DIR_ARGS))"; set +a; \
+	docker compose -f $(MOSAIC_PATH)/deployments/docker-compose.yml -f "$$VLLM_COMPOSE" \
+		up --wait -d --pull always
 
-cleanup:
-	@echo "Cleaning up container stack..."
-	@docker compose -f $(MOSAIC_PATH)/deployments/docker-compose.yml -f $(MOSAIC_PATH)/deployments/docker-compose-vllm.yml down --remove-orphans \
+cleanup: check-uv
+	@set -e; \
+	VLLM_COMPOSE="$$($(PROFILES_CLI) compose-file $(PROFILE) $(PROFILE_DIR_ARGS))"; \
+	if [ -z "$$VLLM_COMPOSE" ]; then \
+		echo "Profile '$(PROFILE)' is externally deployed; nothing to tear down."; \
+		exit 0; \
+	fi; \
+	echo "Cleaning up container stack for profile '$(PROFILE)'..."; \
+	docker compose -f $(MOSAIC_PATH)/deployments/docker-compose.yml -f "$$VLLM_COMPOSE" \
+		down --remove-orphans \
 	&& docker container prune -f
 
 # Run the tests and exit with the pytest exit code

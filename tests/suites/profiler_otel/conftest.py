@@ -9,6 +9,7 @@ This conftest provides fixtures and constants specific to NCCL profiler OTEL tes
 import math
 import os
 import time
+from pathlib import Path
 from urllib.parse import urlparse
 
 import pytest
@@ -425,7 +426,7 @@ def vllm_config(workload_profile: profiles.Profile) -> VllmConfig:
 
     host = os.getenv("VLLM_HOST", default_host)
     port = int(os.getenv("VLLM_PORT", str(default_port)))
-    return VllmConfig(host=host, port=port)
+    return VllmConfig(host=host, port=port, model=workload_profile.serving.model)
 
 
 @pytest.fixture(scope="session")
@@ -501,9 +502,14 @@ def profiler_pipeline_warm(
 @pytest.fixture(scope="session")
 def prompt_workload(vllm_config: VllmConfig, profiler_pipeline_warm):
     """
-    Provide a prompt workload aimed at the profile's endpoint.
+    Provide a prompt workload aimed at the profile's endpoint, serving the profile's model.
     """
-    return PromptWorkload(prompt=PROMPT, host=vllm_config.host, port=vllm_config.port)
+    return PromptWorkload(
+        prompt=PROMPT,
+        host=vllm_config.host,
+        port=vllm_config.port,
+        model=vllm_config.model,
+    )
 
 
 @pytest.fixture(scope="session")
