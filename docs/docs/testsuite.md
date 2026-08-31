@@ -15,6 +15,10 @@ The NCCL Profiler Open Telemetry test suite tests the NCCL Profiler OpenTelemetr
 2. vLLM inference triggers NCCL operations
 3. The NCCL profiler exports metrics to Prometheus via OpenTelemetry
 
+The load a run drives, the timeouts it allows and the telemetry coverage it expects come from a
+[hardware profile](profiles.md), so the same suite runs against anything from the two-GPU
+continuous integration machine to a multi-machine cluster.
+
 ## Hardware Requirements
 
 **Minimum 2 NVIDIA GPUs required.**
@@ -46,12 +50,15 @@ Provides fixtures and constants for the profiler OTEL tests:
 
 | Fixture | Description |
 |---------|-------------|
+| `workload_profile` | The [hardware profile](profiles.md) under test; supplies endpoints, load, timeouts and expected coverage |
 | `prometheus_url` | Prometheus API endpoint (default: `http://localhost:9090`) |
 | `grafana_url` | Grafana endpoint (shared; default: `http://localhost:3000`) |
 | `vllm_client` | Client for vLLM inference API |
 | `vllm_ready` | Waits for vLLM to be healthy |
-| `inference_completed` | Runs inference to trigger NCCL operations |
-| `nccl_profiler_metrics` | List of expected Prometheus metric names |
+| `prompt_workload` | Single completion request against the profile's endpoint |
+| `inferencex_workload` | Benchmark run configured from the profile's `benchmark_options` |
+| `nccl_workload` | `nccl-tests` binary sized to the profile's GPU count |
+| `workload` | Dispatches to one of the above by indirect parametrization |
 
 ### `test_profiler_metrics.py`
 
@@ -61,7 +68,16 @@ Contains the test class `TestNCCLProfilerTelemetry`:
 |------|-------------|
 | `test_otel_collector_accessible` | Verifies Prometheus endpoint is reachable |
 | `test_grafana_accessible` | Verifies Grafana dashboard is reachable |
-| `test_nccl_metrics_exported_after_inference` | Runs inference and validates all expected NCCL metrics appear in Prometheus |
+| `test_nccl_metrics_exported_after_inference` | Runs each workload and requires every expected NCCL metric to rise above a settled baseline |
+| `test_every_node_reports_nccl_metrics` | Requires every host, rank and communicator in the profile's `coverage` to report |
+| `test_metrics_do_not_increase_without_a_workload` | Runs nothing and requires the totals to stay flat |
+
+The last two exist because the exporter republishes every series it has seen on each scrape.
+A test that only checks a sample is present passes forever after the first NCCL operation, and
+a test that only checks a global total passes when a single rank is healthy and the rest are
+silent. See [Hardware Profiles](profiles.md#coverage) for how coverage is declared.
+
+`test_profiles.py` validates the profiles themselves and needs no hardware.
 
 ## Expected Metrics
 
@@ -88,6 +104,9 @@ The tests validate that the following metrics are exported to Prometheus (define
 - `nccl_profiler_transfer_size_bytes_sum` - Transfer sizes per channel
 
 ## Environment Variables
+
+Endpoints default to the values in the active [hardware profile](profiles.md); these variables
+override them.
 
 | Variable | Default | Description |
 |----------|---------|-------------|

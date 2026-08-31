@@ -1,0 +1,51 @@
+# SPDX-FileCopyrightText: 2025 Delos Data Inc
+# SPDX-License-Identifier: Apache-2.0
+#
+# The profile CI runs. Selected when no --workload-profile is given, so
+# .github/workflows/integration-tests.yml needs no arguments.
+#
+# Schema and guidance: docs/docs/profiles.md ("Hardware Profiles").
+description: GitHub Actions integration tests -- 1 machine, 2x RTX PRO 2000 Blackwell
+
+hardware:
+  machines: 1
+  gpus_per_machine: 2
+  sku: rtx-pro-2000-blackwell
+
+serving:
+  mode: aggregated
+  model: Qwen/Qwen3-8B
+  tensor_parallel: 2
+
+deployment:
+  compose_file: ../../../../deployments/docker-compose-vllm.yml
+
+endpoint:
+  host: localhost
+  port: 8080
+
+# What the profiler must actually report. Declared rather than derived from
+# `hardware` -- see scale_2/scale_3, where they diverge.
+coverage:
+  hosts: 1
+  ranks: 2
+  communicators: 1
+
+timeouts:
+  workload: 900
+  metrics_available: 60
+  quiesce: 90
+
+expected_metrics: aggregated_dense
+
+# Passed verbatim to InferencexWorkload(benchmark_options=...), which converts
+# keys to benchmark_serving.py flags generically. Any flag that script accepts
+# can be set here with no code change.
+benchmark_options:
+  num_prompts: 64
+  max_concurrency: 8
+  random_input_len: 512
+  random_output_len: 64
+  num_warmups: 2
+  ignore_eos: true
+  disable_tqdm: true

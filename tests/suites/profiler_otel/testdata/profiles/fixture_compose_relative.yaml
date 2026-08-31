@@ -1,0 +1,42 @@
+# SPDX-FileCopyrightText: 2025 Delos Data Inc
+# SPDX-License-Identifier: Apache-2.0
+#
+# TEST FIXTURE -- not a real deployment, and not on the default search path.
+#
+# Sits two directories deeper than the shipped profile, so it checks that compose_file is
+# resolved against the profile's own directory rather than the repository root. That is what
+# lets a profile and its compose file relocate together into another repository.
+description: Test fixture -- compose path resolved relative to this file
+
+hardware:
+  machines: 1
+  gpus_per_machine: 2
+  sku: fixture-sku
+
+serving:
+  mode: aggregated
+  model: fixture/model
+  tensor_parallel: 2
+
+deployment:
+  compose_file: ../../../../../deployments/docker-compose-vllm.yml
+
+endpoint:
+  host: localhost
+  port: 8080
+
+coverage:
+  hosts: 1
+  ranks: 2
+  communicators: 1
+
+timeouts:
+  workload: 60
+  metrics_available: 10
+  quiesce: 10
+
+expected_metrics: aggregated_dense
+
+benchmark_options:
+  num_prompts: 4
+  ignore_eos: true

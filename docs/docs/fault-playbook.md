@@ -35,7 +35,7 @@ only receive commands. You need:
 
 - **SSH key auth** from the head node to every node in `NODES`, including the
   head node to itself (the harness treats all nodes uniformly).
-- **sudo** on every node for `tc` and `nvidia-smi`. Interactive sudo is enough:
+- **`sudo`** on every node for `tc` and `nvidia-smi`. Interactive `sudo` is enough:
   you are prompted once, at inject time, and the auto-restore timer inherits
   that privilege. For unattended/CI use, add NOPASSWD for just those two
   binaries, e.g. in `/etc/sudoers.d/`:
@@ -77,7 +77,7 @@ default 300); `inject-kill-rank` has none, since there is nothing to auto-restor
 |---|---|---|---|
 | 1 | clamp one GPU's clock | `make inject-slow-gpu RANK=3 CLK=1500` | `RANK` which rank's GPU; `CLK` clock ceiling in MHz |
 | 2 | packet loss | `make inject-netem-loss PCT=1` | `PCT` percentage of packets dropped |
-| 2 | added latency | `make inject-netem-delay MS=20` | `MS` delay added per packet, in ms |
+| 2 | added latency | `make inject-netem-delay MS=20` | `MS` delay added per packet, in milliseconds |
 | 3 | kill one rank | `make inject-kill-rank RANK=3` | `RANK` which rank to kill |
 | 4 | kill the OTel collector | `make inject-kill-collector` | none |
 
@@ -133,7 +133,7 @@ Two rules the harness enforces, both of which matter for clean signatures:
   job; two jobs share the link and emit series with identical `hostname`+`rank`
   labels that silently interleave.
 
-### The safety timer ("deadman")
+### The safety timer (`deadman`)
 
 Every inject arms a timer that undoes the fault after `DEADMAN` seconds
 (default 300). Because you reach each node over the same interface or GPU you're
@@ -254,7 +254,7 @@ the response is close to binary (a small loss degrades; a larger one flatlines
 the job). **Bisect to find the value that degrades without killing.**
 
 **The `delay`-becomes-`loss` trap.** netem's default queue is `limit 1000`
-packets. If the bandwidth-delay product exceeds that (tens of ms on a fast
+packets. If the bandwidth-delay product exceeds that (tens of milliseconds on a fast
 link), the queue overflows and a `delay` fault silently turns into heavy packet
 *loss*. Raise it explicitly if you want pure latency:
 `make _netem NETEM="delay 50ms limit 5000"`.
@@ -422,7 +422,7 @@ still separate them after the fact (expected, not yet verified here):
 
 - **`pkill -f <collector>` can kill the workload** if the workload's command line
   contains the collector's name. Use `pkill -x`.
-- **`pgrep -f <workload-binary>` also matches the launcher** (mpirun). Resolve
+- **`pgrep -f <workload-binary>` also matches the launcher** (`mpirun`). Resolve
   rank → GPU → PID instead.
 - **`up == 0` alone is not a health signal**: unused/misconfigured scrape
   targets are perpetually down. Key on the specific collector job.
