@@ -312,7 +312,7 @@ class TestNCCLProfilerTelemetry:
             gpus, hosts, comms = active_participants()
             enough = (
                 len(hosts) >= coverage.hosts
-                and len(gpus) >= coverage.ranks
+                and len(gpus) >= coverage.gpus
                 and len(comms) >= coverage.communicators
             )
             if enough or time.monotonic() >= deadline:
@@ -326,7 +326,7 @@ class TestNCCLProfilerTelemetry:
         print(
             f"\n  Did work within {time.time() - workload_result.end_time:.1f}s of the "
             f"workload ending: {len(hosts)}/{coverage.hosts} hosts, "
-            f"{len(gpus)}/{coverage.ranks} GPUs, "
+            f"{len(gpus)}/{coverage.gpus} GPUs, "
             f"{len(comms)}/{coverage.communicators} communicators"
         )
         print(f"    GPUs per host : {gpus_by_host}")
@@ -337,9 +337,9 @@ class TestNCCLProfilerTelemetry:
             problems.append(
                 f"expected {coverage.hosts} host(s) doing work, saw {len(hosts)}: {sorted(hosts)}"
             )
-        if len(gpus) != coverage.ranks:
+        if len(gpus) != coverage.gpus:
             problems.append(
-                f"expected {coverage.ranks} GPU(s) doing work, saw {len(gpus)}, "
+                f"expected {coverage.gpus} GPU(s) doing work, saw {len(gpus)}, "
                 f"per host: {gpus_by_host}"
             )
         # Prefill and decode pools form separate communicators; a global total rises even when

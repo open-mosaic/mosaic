@@ -263,9 +263,9 @@ class _ProfileSpec(_Model):
                 f"coverage.hosts: {self.coverage.hosts} exceeds hardware.machines "
                 f"({self.hardware.machines})"
             )
-        if self.coverage.ranks > self.hardware.total_gpus:
+        if self.coverage.gpus > self.hardware.total_gpus:
             raise ProfileError(
-                f"coverage.ranks: {self.coverage.ranks} exceeds the "
+                f"coverage.gpus: {self.coverage.gpus} exceeds the "
                 f"{self.hardware.total_gpus} GPUs the hardware provides"
             )
         return self

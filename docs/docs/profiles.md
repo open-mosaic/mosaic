@@ -16,7 +16,7 @@ filename stem is the profile name.
 
 Profiles exist because the [profiler OTEL suite](testsuite.md) has to run unchanged against
 everything from a two-GPU CI machine to a ninety-six-GPU disaggregated cluster. The load, the
-timeouts and the number of reporting ranks differ by orders of magnitude between them, and none
+timeouts and the number of reporting GPUs differ by orders of magnitude between them, and none
 of that belongs in the test code.
 
 They live in `tests/suites/profiler_otel/profiles/`.
@@ -63,7 +63,7 @@ the deployment configuration it refers to can be moved into another repository t
 | `deployment` | Exactly one of `compose_file` (this suite brings the stack up) or `external: true` (stood up out of band) |
 | `endpoint` | Either `host` and `port`, or `base_url` for a single frontend |
 | `otel_endpoint` | Where profiler telemetry is sent |
-| `coverage` | The `hosts`, `ranks` and `communicators` the profiler must report from |
+| `coverage` | The `hosts`, `gpus` and `communicators` the profiler must report from |
 | `timeouts` | `workload`, `metrics_available` and `quiesce`, in seconds |
 | `expected_metrics` | Names a metric list defined in the suite's `conftest.py` |
 | `benchmark_options` | Passed verbatim to the benchmark workload |
@@ -85,12 +85,12 @@ endpoint:
 
 ## Coverage
 
-`coverage` is what the assertions check: how many hosts, ranks and communicators must actually
+`coverage` is what the assertions check: how many hosts, GPUs and communicators must actually
 report telemetry during a run.
 
 It is declared rather than calculated from `hardware`. On a disaggregated cluster the prefill
 and decode pools can differ in size, and a machine may host only a frontend or a router with no
-GPU ranks at all, so `machines` multiplied by `gpus_per_machine` is the wrong answer. The
+GPUs doing work at all, so `machines` multiplied by `gpus_per_machine` is the wrong answer. The
 `hardware` block stays as documentation and as a sanity bound.
 
 `communicators` matters because prefill and decode form **separate NCCL communicators**. A total
@@ -100,13 +100,21 @@ catches a dead decode pool.
 ### Reading coverage from a running cluster
 
 Rather than predicting the numbers, run once and read them back. The profiler labels every
-series with `hostname`, `rank`, `local_rank` and `communicator`:
+series with `hostname`, `gpu_pci_bus_id`, `gpu_uuid`, `rank`, `local_rank` and `communicator`:
 
 ```text title="Prometheus queries"
 sum by (hostname) (nccl_profiler_collective_bytes_total)
-sum by (hostname, rank) (nccl_profiler_collective_bytes_total)
+sum by (hostname, gpu_pci_bus_id) (nccl_profiler_collective_bytes_total)
 sum by (communicator) (nccl_profiler_collective_bytes_total)
 ```
+
+!!! warning
+    Count GPUs by `gpu_pci_bus_id` (or `gpu_uuid`), never by `rank`. A rank is a position
+    within one communicator, and a deployment builds several -- a tensor-parallel group
+    spanning two machines numbers its ranks 0..7 across them while a node-local group numbers
+    its own 0..3 on each, so one GPU reports under more than one rank. Grouping by
+    `(hostname, rank)` on an eight-GPU cluster with three communicators returns 12.
+    `local_rank` is no better: the profiler assigns it from the rank for every collective.
 
 ### Cross-node traffic needs a pool that spans machines
 
@@ -154,7 +162,7 @@ uv run pytest profiler_otel/test_profiles.py --profile-dir /path/to/your/profile
 ```
 
 Errors name the profile and the field path, for example
-`coverage.ranks: 99 exceeds the 16 GPUs the hardware provides`. What is checked:
+`coverage.gpus: 99 exceeds the 16 GPUs the hardware provides`. What is checked:
 
 - **Unknown keys are rejected.** A misspelled key would otherwise be ignored and leave the
   setting it was meant to change at its default.

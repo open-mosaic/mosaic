@@ -364,7 +364,7 @@ def workload_profile(request) -> profiles.Profile:
     print(f"\n  Profile: {profile.name} ({profile.path})")
     print(f"    {profile.description}")
     print(
-        f"    expecting {profile.coverage.hosts} host(s), {profile.coverage.ranks} rank(s), "
+        f"    expecting {profile.coverage.hosts} host(s), {profile.coverage.gpus} GPU(s), "
         f"{profile.coverage.communicators} communicator(s)"
     )
     return profile

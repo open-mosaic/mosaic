@@ -31,7 +31,7 @@ otel_endpoint: "http://fixture-collector:4318"
 
 coverage:
   hosts: 4
-  ranks: 32
+  gpus: 32
   communicators: 2
 
 timeouts:
