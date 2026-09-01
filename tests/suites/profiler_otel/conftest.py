@@ -242,26 +242,26 @@ def metric_totals_by(
     return totals
 
 
-def metric_totals_by_rank(prometheus_url: str, metric_name: str) -> dict[tuple[str, str], float]:
+def metric_totals_by_gpu(prometheus_url: str, metric_name: str) -> dict[tuple[str, str], float]:
     """
-    Total for *metric_name* per ``(hostname, rank)``.
+    Total for *metric_name* per ``(hostname, gpu_pci_bus_id)`` -- that is, per physical GPU.
 
     ``hostname`` is the container's hostname, which for a container is its id unless one was
     set explicitly -- so two containers on one machine appear as two distinct hosts.
     """
-    series = query_prometheus(prometheus_url, f"sum by (hostname, rank) ({metric_name})")
+    series = query_prometheus(prometheus_url, f"sum by (hostname, gpu_pci_bus_id) ({metric_name})")
     totals: dict[tuple[str, str], float] = {}
     for item in series:
         labels = item.get("metric", {})
-        host, rank = labels.get("hostname"), labels.get("rank")
-        if host is None or rank is None:
+        host, gpu = labels.get("hostname"), labels.get("gpu_pci_bus_id")
+        if host is None or gpu is None:
             continue
         try:
             value = float(item["value"][1])
         except (KeyError, IndexError, ValueError):
             continue
         if math.isfinite(value):
-            totals[(host, rank)] = value
+            totals[(host, gpu)] = value
     return totals
 
 

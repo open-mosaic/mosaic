@@ -20,7 +20,7 @@ from profiler_otel.conftest import (
     metric_increased,
     metric_total,
     metric_totals_by,
-    metric_totals_by_rank,
+    metric_totals_by_gpu,
     wait_for_metrics_quiesced,
 )
 
@@ -263,19 +263,19 @@ class TestNCCLProfilerTelemetry:
         prometheus_url: str,
     ):
         """
-        :title: Telemetry - every node, rank and communicator does work
+        :title: Telemetry - every node, GPU and communicator does work
         :suite: profiler_otel
-        :description: Verify the profiler reports NCCL activity from every expected host, rank
+        :description: Verify the profiler reports NCCL activity from every expected host, GPU
             and communicator, not merely from somewhere. The other tests sum a metric across
-            all of its series, so one healthy rank makes the total rise and they pass while
-            every other rank is silent. Expected counts come from the profile's coverage.
+            all of its series, so one healthy GPU makes the total rise and they pass while
+            every other one is silent. Expected counts come from the profile's coverage.
         """
         coverage = workload_profile.coverage
         timeouts = workload_profile.timeouts
         metrics = expected_nccl_profiler_metrics(inferencex_workload, workload_profile)
 
         # One metric is enough to establish who did work, and keeps the query cheap at high
-        # rank counts. A counter is the most reliable of the family.
+        # GPU counts. A counter is the most reliable of the family.
         probe = "nccl_profiler_collective_bytes_total"
         if probe not in metrics:
             probe = metrics[0]
@@ -283,19 +283,19 @@ class TestNCCLProfilerTelemetry:
         # Counted by *increase*, not by presence. Every containerised workload exports under
         # these same metric names, and the collector keeps republishing a series long after its
         # container is gone, so simply being present says nothing about this workload.
-        baseline_by_rank = metric_totals_by_rank(prometheus_url, probe)
+        baseline_by_gpu = metric_totals_by_gpu(prometheus_url, probe)
         baseline_by_comm = metric_totals_by(prometheus_url, probe, label="communicator")
         _settle_and_snapshot(prometheus_url, [probe], timeouts.quiesce)
 
         workload_result = _run_workload(inferencex_workload, timeouts.workload)
 
         def active_participants():
-            """Ranks, hosts and communicators whose totals rose during this workload."""
-            by_rank = metric_totals_by_rank(prometheus_url, probe)
-            ranks = {
+            """GPUs, hosts and communicators whose totals rose during this workload."""
+            by_gpu = metric_totals_by_gpu(prometheus_url, probe)
+            gpus = {
                 key
-                for key, total in by_rank.items()
-                if metric_increased(baseline_by_rank.get(key), total)
+                for key, total in by_gpu.items()
+                if metric_increased(baseline_by_gpu.get(key), total)
             }
             by_comm = metric_totals_by(prometheus_url, probe, label="communicator")
             comms = {
@@ -303,33 +303,33 @@ class TestNCCLProfilerTelemetry:
                 for name, total in by_comm.items()
                 if metric_increased(baseline_by_comm.get(name), total)
             }
-            return ranks, {host for host, _ in ranks}, comms
+            return gpus, {host for host, _ in gpus}, comms
 
-        # Give the last ranks' samples time to land before judging who is missing; export is
+        # Give the last GPUs' samples time to land before judging who is missing; export is
         # chunky, and a whole workload's traffic can appear in a single scrape.
         deadline = time.monotonic() + timeouts.metrics_available
         while True:
-            ranks, hosts, comms = active_participants()
+            gpus, hosts, comms = active_participants()
             enough = (
                 len(hosts) >= coverage.hosts
-                and len(ranks) >= coverage.ranks
+                and len(gpus) >= coverage.ranks
                 and len(comms) >= coverage.communicators
             )
             if enough or time.monotonic() >= deadline:
                 break
             time.sleep(METRICS_POLL_INTERVAL)
 
-        ranks_by_host: dict[str, list[str]] = {}
-        for host, rank in sorted(ranks):
-            ranks_by_host.setdefault(host, []).append(rank)
+        gpus_by_host: dict[str, list[str]] = {}
+        for host, gpu in sorted(gpus):
+            gpus_by_host.setdefault(host, []).append(gpu)
 
         print(
             f"\n  Did work within {time.time() - workload_result.end_time:.1f}s of the "
             f"workload ending: {len(hosts)}/{coverage.hosts} hosts, "
-            f"{len(ranks)}/{coverage.ranks} ranks, "
+            f"{len(gpus)}/{coverage.ranks} GPUs, "
             f"{len(comms)}/{coverage.communicators} communicators"
         )
-        print(f"    ranks per host: {ranks_by_host}")
+        print(f"    GPUs per host : {gpus_by_host}")
         print(f"    communicators : {sorted(comms)}")
 
         problems: list[str] = []
@@ -337,10 +337,10 @@ class TestNCCLProfilerTelemetry:
             problems.append(
                 f"expected {coverage.hosts} host(s) doing work, saw {len(hosts)}: {sorted(hosts)}"
             )
-        if len(ranks) != coverage.ranks:
+        if len(gpus) != coverage.ranks:
             problems.append(
-                f"expected {coverage.ranks} rank(s) doing work, saw {len(ranks)}, "
-                f"per host: {ranks_by_host}"
+                f"expected {coverage.ranks} GPU(s) doing work, saw {len(gpus)}, "
+                f"per host: {gpus_by_host}"
             )
         # Prefill and decode pools form separate communicators; a global total rises even when
         # only one of them is alive.
@@ -351,9 +351,9 @@ class TestNCCLProfilerTelemetry:
             )
 
         if problems:
-            # A rank present but flat is a different fault from a rank missing entirely, and
+            # A GPU present but flat is a different fault from one missing entirely, and
             # they need different fixes, so name which one this is.
-            idle = sorted(set(metric_totals_by_rank(prometheus_url, probe)) - ranks)
+            idle = sorted(set(metric_totals_by_gpu(prometheus_url, probe)) - gpus)
             if idle:
                 print(f"  Reporting a series but flat across this workload: {idle}")
 

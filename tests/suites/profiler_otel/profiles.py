@@ -177,8 +177,8 @@ class Coverage(_Model):
 
     Declared rather than derived from `Hardware`: on a disaggregated cluster the
     prefill and decode pools can differ in size, and a machine may host only a
-    frontend or router with no GPU ranks, so machines times GPUs is the wrong
-    answer.
+    frontend or router with no GPUs doing work, so machines times GPUs is the
+    wrong answer. Declaring fewer than the hardware provides is legitimate.
 
     `communicators` matters because prefill and decode form separate NCCL
     communicators. A total summed across every series rises when only one pool
@@ -186,7 +186,7 @@ class Coverage(_Model):
     """
 
     hosts: Count
-    ranks: Count
+    gpus: Count
     communicators: Count
 
 

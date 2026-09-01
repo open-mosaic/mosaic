@@ -28,7 +28,7 @@ endpoint:
 # `hardware` -- see scale_2/scale_3, where they diverge.
 coverage:
   hosts: 1
-  ranks: 2
+  gpus: 2
   communicators: 1
 
 timeouts:
