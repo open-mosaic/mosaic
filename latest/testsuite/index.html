@@ -1745,7 +1745,7 @@ A single GPU will not produce NCCL metrics.</p>
 </tr>
 <tr>
 <td><code>test_every_node_reports_nccl_metrics</code></td>
-<td>Requires every host, rank and communicator in the profile's <code>coverage</code> to report</td>
+<td>Requires every host, GPU and communicator in the profile's <code>coverage</code> to report</td>
 </tr>
 <tr>
 <td><code>test_metrics_do_not_increase_without_a_workload</code></td>
@@ -1755,7 +1755,7 @@ A single GPU will not produce NCCL metrics.</p>
 </table>
 <p>The last two exist because the exporter republishes every series it has seen on each scrape.
 A test that only checks a sample is present passes forever after the first NCCL operation, and
-a test that only checks a global total passes when a single rank is healthy and the rest are
+a test that only checks a global total passes when a single GPU is healthy and the rest are
 silent. See <a href="../profiles/#coverage">Hardware Profiles</a> for how coverage is declared.</p>
 <p><code>test_profiles.py</code> validates the profiles themselves and needs no hardware.</p>
 <h3 id="expected-metrics">Expected Metrics<a class="headerlink" href="#expected-metrics" title="Permanent link">#</a></h3>

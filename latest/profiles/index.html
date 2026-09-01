@@ -1433,7 +1433,7 @@ runs on, the serving topology, the load to drive, and the profiler coverage to e
 filename stem is the profile name.</p>
 <p>Profiles exist because the <a href="../testsuite/">profiler OTEL suite</a> has to run unchanged against
 everything from a two-GPU CI machine to a ninety-six-GPU disaggregated cluster. The load, the
-timeouts and the number of reporting ranks differ by orders of magnitude between them, and none
+timeouts and the number of reporting GPUs differ by orders of magnitude between them, and none
 of that belongs in the test code.</p>
 <p>They live in <code>tests/suites/profiler_otel/profiles/</code>.</p>
 <h3 id="which-profiles-ship-here">Which profiles ship here<a class="headerlink" href="#which-profiles-ship-here" title="Permanent link">#</a></h3>
@@ -1494,7 +1494,7 @@ left set in a shell cannot silently change a later run.</p>
 </tr>
 <tr>
 <td><code>coverage</code></td>
-<td>The <code>hosts</code>, <code>ranks</code> and <code>communicators</code> the profiler must report from</td>
+<td>The <code>hosts</code>, <code>gpus</code> and <code>communicators</code> the profiler must report from</td>
 </tr>
 <tr>
 <td><code>timeouts</code></td>
@@ -1521,22 +1521,31 @@ single frontend sets <code>base_url</code> and clears the host and port:</p>
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">base_url</span><span class="p">:</span><span class="w"> </span><span class="s">"http://frontend:8000"</span>
 </span></code></pre></div>
 <h3 id="coverage">Coverage<a class="headerlink" href="#coverage" title="Permanent link">#</a></h3>
-<p><code>coverage</code> is what the assertions check: how many hosts, ranks and communicators must actually
+<p><code>coverage</code> is what the assertions check: how many hosts, GPUs and communicators must actually
 report telemetry during a run.</p>
 <p>It is declared rather than calculated from <code>hardware</code>. On a disaggregated cluster the prefill
 and decode pools can differ in size, and a machine may host only a frontend or a router with no
-GPU ranks at all, so <code>machines</code> multiplied by <code>gpus_per_machine</code> is the wrong answer. The
+GPUs doing work at all, so <code>machines</code> multiplied by <code>gpus_per_machine</code> is the wrong answer. The
 <code>hardware</code> block stays as documentation and as a sanity bound.</p>
 <p><code>communicators</code> matters because prefill and decode form <strong>separate NCCL communicators</strong>. A total
 summed across every series rises when only one pool is alive, so requiring more than one is what
 catches a dead decode pool.</p>
 <h4 id="reading-coverage-from-a-running-cluster">Reading coverage from a running cluster<a class="headerlink" href="#reading-coverage-from-a-running-cluster" title="Permanent link">#</a></h4>
 <p>Rather than predicting the numbers, run once and read them back. The profiler labels every
-series with <code>hostname</code>, <code>rank</code>, <code>local_rank</code> and <code>communicator</code>:</p>
+series with <code>hostname</code>, <code>gpu_pci_bus_id</code>, <code>gpu_uuid</code>, <code>rank</code>, <code>local_rank</code> and <code>communicator</code>:</p>
 <div class="language-text highlight"><span class="filename">Prometheus queries</span><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>sum by (hostname) (nccl_profiler_collective_bytes_total)
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>sum by (hostname, rank) (nccl_profiler_collective_bytes_total)
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>sum by (hostname, gpu_pci_bus_id) (nccl_profiler_collective_bytes_total)
 </span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>sum by (communicator) (nccl_profiler_collective_bytes_total)
 </span></code></pre></div>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>Count GPUs by <code>gpu_pci_bus_id</code> (or <code>gpu_uuid</code>), never by <code>rank</code>. A rank is a position
+within one communicator, and a deployment builds several -- a tensor-parallel group
+spanning two machines numbers its ranks 0..7 across them while a node-local group numbers
+its own 0..3 on each, so one GPU reports under more than one rank. Grouping by
+<code>(hostname, rank)</code> on an eight-GPU cluster with three communicators returns 12.
+<code>local_rank</code> is no better: the profiler assigns it from the rank for every collective.</p>
+</div>
 <h4 id="cross-node-traffic-needs-a-pool-that-spans-machines">Cross-node traffic needs a pool that spans machines<a class="headerlink" href="#cross-node-traffic-needs-a-pool-that-spans-machines" title="Permanent link">#</a></h4>
 <p>A worker pool pinned to one machine produces no cross-node NCCL. Every collective stays inside
 the node, and the only traffic between machines is the key-value cache transfer, which the
@@ -1570,7 +1579,7 @@ part-way through a run. Validation needs no hardware:</p>
 <div class="language-bash highlight"><span class="filename">Validate a directory of profiles</span><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>uv<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span>profiler_otel/test_profiles.py<span class="w"> </span>--profile-dir<span class="w"> </span>/path/to/your/profiles
 </span></code></pre></div>
 <p>Errors name the profile and the field path, for example
-<code>coverage.ranks: 99 exceeds the 16 GPUs the hardware provides</code>. What is checked:</p>
+<code>coverage.gpus: 99 exceeds the 16 GPUs the hardware provides</code>. What is checked:</p>
 <ul>
 <li><strong>Unknown keys are rejected.</strong> A misspelled key would otherwise be ignored and leave the
   setting it was meant to change at its default.</li>
