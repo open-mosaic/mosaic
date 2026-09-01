@@ -27,7 +27,7 @@ endpoint:
 
 coverage:
   hosts: 1
-  ranks: 2
+  gpus: 2
   communicators: 1
 
 timeouts:

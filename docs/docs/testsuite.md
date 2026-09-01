@@ -69,12 +69,12 @@ Contains the test class `TestNCCLProfilerTelemetry`:
 | `test_otel_collector_accessible` | Verifies Prometheus endpoint is reachable |
 | `test_grafana_accessible` | Verifies Grafana dashboard is reachable |
 | `test_nccl_metrics_exported_after_inference` | Runs each workload and requires every expected NCCL metric to rise above a settled baseline |
-| `test_every_node_reports_nccl_metrics` | Requires every host, rank and communicator in the profile's `coverage` to report |
+| `test_every_node_reports_nccl_metrics` | Requires every host, GPU and communicator in the profile's `coverage` to report |
 | `test_metrics_do_not_increase_without_a_workload` | Runs nothing and requires the totals to stay flat |
 
 The last two exist because the exporter republishes every series it has seen on each scrape.
 A test that only checks a sample is present passes forever after the first NCCL operation, and
-a test that only checks a global total passes when a single rank is healthy and the rest are
+a test that only checks a global total passes when a single GPU is healthy and the rest are
 silent. See [Hardware Profiles](profiles.md#coverage) for how coverage is declared.
 
 `test_profiles.py` validates the profiles themselves and needs no hardware.

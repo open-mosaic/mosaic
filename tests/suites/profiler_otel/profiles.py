@@ -177,8 +177,8 @@ class Coverage(_Model):
 
     Declared rather than derived from `Hardware`: on a disaggregated cluster the
     prefill and decode pools can differ in size, and a machine may host only a
-    frontend or router with no GPU ranks, so machines times GPUs is the wrong
-    answer.
+    frontend or router with no GPUs doing work, so machines times GPUs is the
+    wrong answer. Declaring fewer than the hardware provides is legitimate.
 
     `communicators` matters because prefill and decode form separate NCCL
     communicators. A total summed across every series rises when only one pool
@@ -186,7 +186,7 @@ class Coverage(_Model):
     """
 
     hosts: Count
-    ranks: Count
+    gpus: Count
     communicators: Count
 
 
@@ -263,9 +263,9 @@ class _ProfileSpec(_Model):
                 f"coverage.hosts: {self.coverage.hosts} exceeds hardware.machines "
                 f"({self.hardware.machines})"
             )
-        if self.coverage.ranks > self.hardware.total_gpus:
+        if self.coverage.gpus > self.hardware.total_gpus:
             raise ProfileError(
-                f"coverage.ranks: {self.coverage.ranks} exceeds the "
+                f"coverage.gpus: {self.coverage.gpus} exceeds the "
                 f"{self.hardware.total_gpus} GPUs the hardware provides"
             )
         return self

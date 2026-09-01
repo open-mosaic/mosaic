@@ -31,7 +31,7 @@ def _profile_file() -> dict[str, Any]:
         "serving": {"mode": "aggregated", "model": "test/model", "tensor_parallel": 2},
         "deployment": {"compose_file": "../../../../deployments/docker-compose-vllm.yml"},
         "endpoint": {"host": "localhost", "port": 8080},
-        "coverage": {"hosts": 1, "ranks": 2, "communicators": 1},
+        "coverage": {"hosts": 1, "gpus": 2, "communicators": 1},
         "timeouts": {"workload": 900, "metrics_available": 60, "quiesce": 90},
         "expected_metrics": "aggregated_dense",
         "benchmark_options": {"num_prompts": 4, "ignore_eos": True},
@@ -51,7 +51,7 @@ def _disaggregated_profile_file() -> dict[str, Any]:
     }
     raw["deployment"] = {"external": True}
     raw["endpoint"] = {"base_url": "http://frontend:8000"}
-    raw["coverage"] = {"hosts": 2, "ranks": 16, "communicators": 2}
+    raw["coverage"] = {"hosts": 2, "gpus": 16, "communicators": 2}
     raw["expected_metrics"] = "disagg_moe"
     return raw
 
@@ -344,7 +344,7 @@ class TestProfileValidation:
         assert profile.hardware.total_gpus == 2, "total_gpus should be machines * gpus"
         assert profile.serving.mode is profiles.ServingMode.AGGREGATED, "mode did not round-trip"
         assert profile.timeouts.workload == 900, "workload timeout did not round-trip"
-        assert profile.coverage.ranks == 2, "coverage.ranks did not round-trip"
+        assert profile.coverage.gpus == 2, "coverage.gpus did not round-trip"
         assert profile.expected_metrics is profiles.MetricSet.AGGREGATED_DENSE, (
             "expected_metrics did not round-trip"
         )
@@ -380,7 +380,7 @@ class TestProfileValidation:
         profile = _parse(_profile_file())
 
         with pytest.raises(ValidationError):
-            profile.coverage.ranks = 99
+            profile.coverage.gpus = 99
 
     def test_unknown_key_is_rejected(self) -> None:
         """
@@ -399,12 +399,12 @@ class TestProfileValidation:
     @pytest.mark.parametrize(
         "section,key,value",
         [
-            ("coverage", "ranks", 0),
+            ("coverage", "gpus", 0),
             ("coverage", "hosts", -1),
             ("timeouts", "workload", 0),
             ("hardware", "gpus_per_machine", 0),
         ],
-        ids=["zero-ranks", "negative-hosts", "zero-timeout", "zero-gpus"],
+        ids=["zero-coverage-gpus", "negative-hosts", "zero-timeout", "zero-gpus-per-machine"],
     )
     def test_counts_and_timeouts_must_be_positive(self, section, key, value) -> None:
         """
@@ -429,9 +429,9 @@ class TestProfileValidation:
             machines or GPUs available is a test that can never pass.
         """
         raw = _profile_file()
-        raw["coverage"]["ranks"] = 99
+        raw["coverage"]["gpus"] = 99
 
-        with pytest.raises(profiles.ProfileError, match="coverage.ranks"):
+        with pytest.raises(profiles.ProfileError, match="coverage.gpus"):
             _parse(raw)
 
     def test_coverage_is_not_derived_from_the_hardware(self) -> None:
@@ -440,15 +440,15 @@ class TestProfileValidation:
         :suite: profiler_otel
         :description:
             Machines times GPUs is the wrong answer for a disaggregated cluster, where
-            a machine may host only a frontend with no GPU ranks. Coverage is declared,
-            so fewer ranks than the hardware provides must parse.
+            a machine may host only a frontend with no GPUs doing work. Coverage is
+            declared, so fewer GPUs than the hardware provides must parse.
         """
         raw = _disaggregated_profile_file()
-        raw["coverage"] = {"hosts": 1, "ranks": 8, "communicators": 2}
+        raw["coverage"] = {"hosts": 1, "gpus": 8, "communicators": 2}
 
         profile = _parse(raw)
 
-        assert profile.coverage.ranks == 8, "under-declared coverage should be accepted"
+        assert profile.coverage.gpus == 8, "under-declared coverage should be accepted"
         assert profile.hardware.total_gpus == 16, "hardware total should be unaffected"
 
     @pytest.mark.parametrize(
@@ -575,11 +575,11 @@ class TestProfileValidation:
             say which file and which field, not just what was wrong.
         """
         raw = _profile_file()
-        del raw["coverage"]["ranks"]
+        del raw["coverage"]["gpus"]
 
         with pytest.raises(profiles.ProfileError) as exc_info:
             _parse(raw)
 
         message = str(exc_info.value)
         assert "unit-test" in message, f"message does not name the profile: {message}"
-        assert "coverage.ranks" in message, f"message does not name the field: {message}"
+        assert "coverage.gpus" in message, f"message does not name the field: {message}"
