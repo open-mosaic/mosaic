@@ -40,8 +40,42 @@ def _format_value(value: float | None) -> str:
     return "absent" if value is None else f"{value:.6g}"
 
 
-def _format_totals(totals: dict[str, float | None]) -> str:
-    return ", ".join(f"{name}={_format_value(value)}" for name, value in totals.items())
+def _format_number(value: float | None, spec: str = ".2f", suffix: str = "") -> str:
+    """Render a benchmark number, or "-" when the run did not report it."""
+    return "-" if value is None else f"{value:{spec}}{suffix}"
+
+
+def _format_delta(baseline: float | None, current: float | None) -> str:
+    """
+    Percentage change from *baseline* to *current*.
+    """
+    if baseline is None or current is None:
+        return "-"
+    if baseline == 0:
+        return "new" if current > 0 else "+0.00%"
+    return f"{(current - baseline) / baseline * 100:+.2f}%"
+
+
+def _table(
+    headers: list[str],
+    rows: list[list[str]],
+    indent: str = "  ",
+    left: set[int] | None = None,
+) -> str:
+    """
+    Render *rows* as a fixed-width table, returned as a single string.
+    """
+    left_aligned = {0} | (left or set())
+    widths = [max(len(row[i]) for row in (headers, *rows)) for i in range(len(headers))]
+
+    def line(cells: list[str]) -> str:
+        rendered = (
+            cell.ljust(widths[i]) if i in left_aligned else cell.rjust(widths[i]) for i, cell in enumerate(cells)
+        )
+        return (indent + "  ".join(rendered)).rstrip()
+
+    separator = ["-" * width for width in widths]
+    return "\n".join([line(headers), line(separator), *(line(row) for row in rows)])
 
 
 def _settle_and_snapshot(prometheus_url, metric_names, quiesce_timeout):
@@ -49,9 +83,7 @@ def _settle_and_snapshot(prometheus_url, metric_names, quiesce_timeout):
     Wait for the metric totals to stop moving, then return them as a baseline.
     """
     print("\n  Waiting for NCCL metric totals to settle before taking a baseline...")
-    baseline, settled = wait_for_metrics_quiesced(
-        prometheus_url, metric_names, timeout=quiesce_timeout
-    )
+    baseline, settled = wait_for_metrics_quiesced(prometheus_url, metric_names, timeout=quiesce_timeout)
     if not settled:
         print(
             f"  WARNING: totals still moving after {quiesce_timeout}s; baseline may "
@@ -69,7 +101,8 @@ def _run_workload(workload, timeout):
 
     workload_result = workload.get_result()
 
-    print("Workload result:")
+    name = getattr(workload, "workload_name", type(workload).__name__)
+    print(f"\n  Workload result -- {name}")
     match workload_result.result:
         case str():
             print(workload_result.result)
@@ -78,12 +111,25 @@ def _run_workload(workload, timeout):
             print(f"  Usage: {workload_result.result.usage}")
             print(f"  Text: {workload_result.result.text}")
         case InferencexBenchmarkResult() as bench:
-            print(f"  Completed {bench.successful_requests} requests in {bench.duration_seconds}s")
-            print(f"  Throughput: {bench.total_token_throughput} tok/s total, "
-                  f"{bench.output_token_throughput} tok/s output")
             latency = bench.latency_ms
-            print(f"  TTFT mean/p99 (ms): {latency.get('mean_ttft')} / {latency.get('p99_ttft')}")
-            print(f"  TPOT mean/p99 (ms): {latency.get('mean_tpot')} / {latency.get('p99_tpot')}")
+            print(
+                _table(
+                    ["measure", "value", "unit"],
+                    [
+                        ["requests completed", _format_number(bench.successful_requests, "d"), ""],
+                        ["duration", _format_number(bench.duration_seconds), "s"],
+                        ["input tokens", _format_number(bench.total_input_tokens, "d"), ""],
+                        ["generated tokens", _format_number(bench.total_generated_tokens, "d"), ""],
+                        ["request throughput", _format_number(bench.request_throughput), "req/s"],
+                        ["token throughput total", _format_number(bench.total_token_throughput), "tok/s"],
+                        ["token throughput output", _format_number(bench.output_token_throughput), "tok/s"],
+                        ["TTFT mean", _format_number(latency.get("mean_ttft")), "ms"],
+                        ["TTFT p99", _format_number(latency.get("p99_ttft")), "ms"],
+                        ["TPOT mean", _format_number(latency.get("mean_tpot")), "ms"],
+                        ["TPOT p99", _format_number(latency.get("p99_tpot")), "ms"],
+                    ],
+                )
+            )
         case None:
             print("  (no result -- workload was stopped or produced no parseable output)")
 
@@ -104,7 +150,7 @@ def _poll_until_increased(prometheus_url, metric_names, baseline, result, timeou
     fixed amount this records each metric as soon as it moves and returns once they all have or
     the timeout elapses.
     """
-    increased: dict[str, float] = {}
+    increased: dict[str, tuple[float, float]] = {}
     deadline = time.monotonic() + timeout
     while True:
         for metric_name in metric_names:
@@ -112,12 +158,7 @@ def _poll_until_increased(prometheus_url, metric_names, baseline, result, timeou
                 continue
             current = metric_total(prometheus_url, metric_name)
             if metric_increased(baseline[metric_name], current):
-                increased[metric_name] = current
-                print(
-                    f"    Increased: {metric_name} "
-                    f"{_format_value(baseline[metric_name])} -> {_format_value(current)} "
-                    f"(+{time.time() - result.end_time:.1f}s after workload end)"
-                )
+                increased[metric_name] = (current, time.time() - result.end_time)
 
         if len(increased) == len(metric_names) or time.monotonic() >= deadline:
             return increased
@@ -203,17 +244,18 @@ class TestNCCLProfilerTelemetry:
         timeouts = workload_profile.timeouts
         nccl_profiler_metrics = expected_nccl_profiler_metrics(workload, workload_profile)
 
-        baseline = _settle_and_snapshot(
-            prometheus_url, nccl_profiler_metrics, timeouts.quiesce
+        baseline = _settle_and_snapshot(prometheus_url, nccl_profiler_metrics, timeouts.quiesce)
+        print(f"  Baseline ({len(baseline)} metrics):")
+        print(
+            _table(
+                ["metric", "total"],
+                [[name, _format_value(value)] for name, value in baseline.items()],
+            )
         )
-        print(f"  Baseline ({len(baseline)} metrics): {_format_totals(baseline)}")
 
         workload_result = _run_workload(workload, timeouts.workload)
 
-        print(
-            f"  Workload window: start={workload_result.start_time:.3f} "
-            f"end={workload_result.end_time:.3f}"
-        )
+        print(f"  Workload window: start={workload_result.start_time:.3f} end={workload_result.end_time:.3f}")
         increased_metrics = _poll_until_increased(
             prometheus_url,
             nccl_profiler_metrics,
@@ -224,31 +266,42 @@ class TestNCCLProfilerTelemetry:
 
         missing_metrics = [m for m in nccl_profiler_metrics if m not in increased_metrics]
 
-        print(
-            f"\n  {len(increased_metrics)}/{len(nccl_profiler_metrics)} NCCL profiler "
-            "metrics increased during the workload"
-        )
-        if missing_metrics:
-            print(f"  Metrics that did not increase: {missing_metrics}")
-            # Separate the failure modes. Because the baseline was taken after the
-            # totals settled, a flat total means the profiler genuinely produced nothing
-            # for this workload. It is no longer possible to confuse that with "the series
-            # is missing" or "ingest is slow".
-            #   no series at all -> nothing was ever exported; check the profiler plugin,
-            #                       the OTLP endpoint and the collector
-            #   total unchanged  -> the exporter is alive and being scraped, but this
-            #                       workload drove no NCCL ops through it
-            print("  Diagnostics:")
-            for metric_name in missing_metrics:
+        # One row per expected metric, in the profile's order, so the table is the whole story:
+        # what each total was, what it became, and for anything that did not move, which of the
+        # two failure modes it is. Because the baseline was taken after the totals settled, a
+        # flat total means the profiler genuinely produced nothing for this workload -- that can
+        # no longer be confused with "the series is missing" or "ingest is slow".
+        #   NO SERIES -> nothing was ever exported; check the profiler plugin, the OTLP
+        #                endpoint and the collector
+        #   FLAT      -> the exporter is alive and being scraped, but this workload drove no
+        #                NCCL ops through it
+        rows = []
+        for metric_name in nccl_profiler_metrics:
+            before = baseline[metric_name]
+            if metric_name in increased_metrics:
+                current, seen_after = increased_metrics[metric_name]
+                seen, status = f"+{seen_after:.1f}s", "rose"
+            else:
                 current = metric_total(prometheus_url, metric_name)
-                if current is None:
-                    print(f"    {metric_name}: no series in Prometheus")
-                    continue
-                print(
-                    f"    {metric_name}: baseline={_format_value(baseline[metric_name])} "
-                    f"current={_format_value(current)} (unchanged after "
-                    f"{timeouts.metrics_available}s)"
-                )
+                seen = "-"
+                status = "NO SERIES" if current is None else "FLAT"
+            rows.append(
+                [
+                    metric_name,
+                    _format_value(before),
+                    _format_value(current),
+                    _format_delta(before, current),
+                    seen,
+                    status,
+                ]
+            )
+
+        print(
+            f"\n  NCCL profiler metrics -- {len(increased_metrics)}/"
+            f"{len(nccl_profiler_metrics)} increased within {timeouts.metrics_available}s "
+            "of the workload ending"
+        )
+        print(_table(["metric", "baseline", "current", "delta", "seen", "status"], rows, left={5}))
 
         assert not missing_metrics, (
             f"Expected {len(nccl_profiler_metrics)} metrics to increase, "
@@ -292,17 +345,9 @@ class TestNCCLProfilerTelemetry:
         def active_participants():
             """GPUs, hosts and communicators whose totals rose during this workload."""
             by_gpu = metric_totals_by_gpu(prometheus_url, probe)
-            gpus = {
-                key
-                for key, total in by_gpu.items()
-                if metric_increased(baseline_by_gpu.get(key), total)
-            }
+            gpus = {key for key, total in by_gpu.items() if metric_increased(baseline_by_gpu.get(key), total)}
             by_comm = metric_totals_by(prometheus_url, probe, label="communicator")
-            comms = {
-                name
-                for name, total in by_comm.items()
-                if metric_increased(baseline_by_comm.get(name), total)
-            }
+            comms = {name for name, total in by_comm.items() if metric_increased(baseline_by_comm.get(name), total)}
             return gpus, {host for host, _ in gpus}, comms
 
         # Give the last GPUs' samples time to land before judging who is missing; export is
@@ -311,9 +356,7 @@ class TestNCCLProfilerTelemetry:
         while True:
             gpus, hosts, comms = active_participants()
             enough = (
-                len(hosts) >= coverage.hosts
-                and len(gpus) >= coverage.gpus
-                and len(comms) >= coverage.communicators
+                len(hosts) >= coverage.hosts and len(gpus) >= coverage.gpus and len(comms) >= coverage.communicators
             )
             if enough or time.monotonic() >= deadline:
                 break
@@ -323,25 +366,42 @@ class TestNCCLProfilerTelemetry:
         for host, gpu in sorted(gpus):
             gpus_by_host.setdefault(host, []).append(gpu)
 
+        print(f"\n  Did work within {time.time() - workload_result.end_time:.1f}s of the workload ending ({probe})")
         print(
-            f"\n  Did work within {time.time() - workload_result.end_time:.1f}s of the "
-            f"workload ending: {len(hosts)}/{coverage.hosts} hosts, "
-            f"{len(gpus)}/{coverage.gpus} GPUs, "
-            f"{len(comms)}/{coverage.communicators} communicators"
+            _table(
+                ["participant", "seen", "expected", "status"],
+                [
+                    [
+                        label,
+                        str(len(seen)),
+                        str(expected),
+                        "ok" if len(seen) >= expected else "SHORT",
+                    ]
+                    for label, seen, expected in (
+                        ("hosts", hosts, coverage.hosts),
+                        ("GPUs", gpus, coverage.gpus),
+                        ("communicators", comms, coverage.communicators),
+                    )
+                ],
+            )
         )
-        print(f"    GPUs per host : {gpus_by_host}")
+
+        print()
+        print(
+            _table(
+                ["host", "GPUs", "PCI addresses"],
+                [[host, str(len(host_gpus)), ", ".join(host_gpus)] for host, host_gpus in sorted(gpus_by_host.items())]
+                or [["(none)", "0", ""]],
+                left={2},
+            )
+        )
         print(f"    communicators : {sorted(comms)}")
 
         problems: list[str] = []
         if len(hosts) != coverage.hosts:
-            problems.append(
-                f"expected {coverage.hosts} host(s) doing work, saw {len(hosts)}: {sorted(hosts)}"
-            )
+            problems.append(f"expected {coverage.hosts} host(s) doing work, saw {len(hosts)}: {sorted(hosts)}")
         if len(gpus) != coverage.gpus:
-            problems.append(
-                f"expected {coverage.gpus} GPU(s) doing work, saw {len(gpus)}, "
-                f"per host: {gpus_by_host}"
-            )
+            problems.append(f"expected {coverage.gpus} GPU(s) doing work, saw {len(gpus)}, per host: {gpus_by_host}")
         # Prefill and decode pools form separate communicators; a global total rises even when
         # only one of them is alive.
         if len(comms) < coverage.communicators:
@@ -362,9 +422,7 @@ class TestNCCLProfilerTelemetry:
             f"({probe}):\n  - " + "\n  - ".join(problems)
         )
 
-    def test_metrics_do_not_increase_without_a_workload(
-        self, workload_profile, prometheus_url: str
-    ):
+    def test_metrics_do_not_increase_without_a_workload(self, workload_profile, prometheus_url: str):
         """
         :title: Telemetry - NCCL metrics do not increase while idle
         :suite: profiler_otel
@@ -382,14 +440,9 @@ class TestNCCLProfilerTelemetry:
         # the same opportunity to show up here as there.
         observation_period = timeouts.metrics_available
 
-        baseline, settled = wait_for_metrics_quiesced(
-            prometheus_url, metrics, timeout=quiesce_timeout
-        )
+        baseline, settled = wait_for_metrics_quiesced(prometheus_url, metrics, timeout=quiesce_timeout)
         if not settled:
-            pytest.fail(
-                f"NCCL metric totals still moving after {quiesce_timeout}s; cannot "
-                "establish an idle baseline"
-            )
+            pytest.fail(f"NCCL metric totals still moving after {quiesce_timeout}s; cannot establish an idle baseline")
         baseline_by_host = {m: metric_totals_by(prometheus_url, m) for m in metrics}
 
         time.sleep(observation_period)
@@ -405,8 +458,7 @@ class TestNCCLProfilerTelemetry:
                     leaky_hosts.setdefault(host, []).append(name)
 
         print(
-            f"\n  Idled {observation_period}s after the totals settled; "
-            f"{len(increased)}/{len(metrics)} metrics moved"
+            f"\n  Idled {observation_period}s after the totals settled; {len(increased)}/{len(metrics)} metrics moved"
         )
         assert not increased and not leaky_hosts, (
             "NCCL metric totals rose with no workload running: "
