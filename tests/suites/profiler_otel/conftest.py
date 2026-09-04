@@ -9,7 +9,6 @@ This conftest provides fixtures and constants specific to NCCL profiler OTEL tes
 import math
 import os
 import time
-from pathlib import Path
 from urllib.parse import urlparse
 
 import pytest
@@ -30,6 +29,8 @@ from profiler_otel import profiles
 
 # PROMPT = "Explain briefly the different LLM parallelization techniques."
 PROMPT = "How many oceans are there in the world?"
+PROMPT_WORKLOAD_COUNT = 20
+PROMPT_WORKLOAD_MAX_TOKENS = 256
 
 # Sent once before any measurement. The content is irrelevant -- it exists to get the server
 # and the telemetry pipeline out of their cold state, not to test anything.
@@ -509,6 +510,8 @@ def prompt_workload(vllm_config: VllmConfig, profiler_pipeline_warm):
         host=vllm_config.host,
         port=vllm_config.port,
         model=vllm_config.model,
+        count=PROMPT_WORKLOAD_COUNT,
+        max_tokens=PROMPT_WORKLOAD_MAX_TOKENS,
     )
 
 
