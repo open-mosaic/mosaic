@@ -9,7 +9,6 @@ This conftest provides fixtures and constants specific to NCCL profiler OTEL tes
 import math
 import os
 import time
-from pathlib import Path
 from urllib.parse import urlparse
 
 import pytest
@@ -22,6 +21,7 @@ from production_test_framework.workload.inferencex_workload import InferencexWor
 from production_test_framework.workload.nccl_workload import NcclWorkload
 
 from profiler_otel import profiles
+from profiler_otel.environment import environment_rows
 
 
 # =============================================================================
@@ -345,7 +345,8 @@ def workload_profile(request) -> profiles.Profile:
     """
     The hardware profile under test, from ``--workload-profile``.
 
-    Session-scoped: one profile describes the deployment the whole run targets.
+    Session-scoped: one profile describes the deployment the whole run targets. Loading it is
+    also what records the report's environment table
     """
     name = request.config.getoption("--workload-profile")
     extra_dirs = request.config.getoption("profile_dirs")
@@ -361,11 +362,14 @@ def workload_profile(request) -> profiles.Profile:
 
     if error is not None:
         pytest.fail(error, pytrace=False)
-    print(f"\n  Profile: {profile.name} ({profile.path})")
-    print(f"    {profile.description}")
-    print(
-        f"    expecting {profile.coverage.hosts} host(s), {profile.coverage.gpus} GPU(s), "
-        f"{profile.coverage.communicators} communicator(s)"
+
+    reporter = request.config.mosaic_reporter
+    reporter.set_environment(
+        environment_rows(
+            profile,
+            request.getfixturevalue("prometheus_url"),
+            request.getfixturevalue("grafana_url"),
+        )
     )
     return profile
 
