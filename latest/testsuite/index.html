@@ -1813,7 +1813,7 @@ override them.</p>
 </tr>
 <tr>
 <td><code>PROMETHEUS_HOST</code></td>
-<td><code>localhost</code></td>
+<td><code>endpoint.prometheus_host</code>, else <code>endpoint.host</code>, else <code>localhost</code></td>
 <td>Prometheus host</td>
 </tr>
 <tr>
@@ -1823,13 +1823,18 @@ override them.</p>
 </tr>
 <tr>
 <td><code>GRAFANA_HOST</code></td>
-<td><code>localhost</code></td>
+<td><code>endpoint.grafana_host</code>, else <code>endpoint.host</code>, else <code>localhost</code></td>
 <td>Grafana host</td>
 </tr>
 <tr>
 <td><code>GRAFANA_PORT</code></td>
-<td><code>3000</code></td>
+<td><code>endpoint.grafana_port</code>, else <code>3000</code></td>
 <td>Grafana port</td>
+</tr>
+<tr>
+<td><code>GPU_INFO_SSH_USER</code></td>
+<td><code>endpoint.gpu_info_ssh_user</code></td>
+<td>SSH login for the head-node driver and CUDA versions in a report</td>
 </tr>
 </tbody>
 </table>

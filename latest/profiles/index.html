@@ -841,6 +841,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#the-clusters-own-addresses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The cluster's own addresses
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1321,6 +1332,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#the-clusters-own-addresses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The cluster's own addresses
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1486,7 +1508,7 @@ left set in a shell cannot silently change a later run.</p>
 </tr>
 <tr>
 <td><code>endpoint</code></td>
-<td>Either <code>host</code> and <code>port</code>, or <code>base_url</code> for a single frontend</td>
+<td>Either <code>host</code> and <code>port</code>, or <code>base_url</code> for a single frontend. Also the site's own <code>gpu_info_ssh_user</code>, <code>prometheus_host</code>, <code>grafana_host</code> and <code>grafana_port</code></td>
 </tr>
 <tr>
 <td><code>otel_endpoint</code></td>
@@ -1520,6 +1542,26 @@ single frontend sets <code>base_url</code> and clears the host and port:</p>
 <div class="language-yaml highlight"><span class="filename">Targeting one frontend instead of a host and port</span><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">endpoint</span><span class="p">:</span>
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">base_url</span><span class="p">:</span><span class="w"> </span><span class="s">"http://frontend:8000"</span>
 </span></code></pre></div>
+<h4 id="the-clusters-own-addresses">The cluster's own addresses<a class="headerlink" href="#the-clusters-own-addresses" title="Permanent link">#</a></h4>
+<p><code>endpoint</code> also carries where a run reads its results back from: the Prometheus holding the
+profiler's metrics, the Grafana the dashboards checks go to, and the SSH login the report uses
+to collect the head node's driver and CUDA versions.</p>
+<div class="language-yaml highlight"><span class="filename">Naming a site&#x27;s observability once</span><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">endpoint</span><span class="p">:</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10.0.0.1</span><span class="w">        </span><span class="c1"># the node serving requests; the head node on a disaggregated cluster</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8192</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span><span class="nt">gpu_info_ssh_user</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">operator</span><span class="w">   </span><span class="c1"># a login on that head node</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span><span class="c1"># Only needed when the LGTM stack runs somewhere other than `host` -- here, 10.0.0.9:</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">  </span><span class="nt">prometheus_host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10.0.0.9</span><span class="w">     </span><span class="c1"># default: `host`</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">  </span><span class="nt">grafana_host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10.0.0.9</span><span class="w">        </span><span class="c1"># default: `host`</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">  </span><span class="nt">grafana_port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3000</span><span class="w">            </span><span class="c1"># default: 3000</span>
+</span></code></pre></div>
+<p>They live in the profile because the alternative is a default inside a launcher, which is right
+on the machine it was written for and silently wrong everywhere else: a sweep pointed at a
+second cluster goes on reading the first one's metrics and reports its numbers as this one's.
+<code>PROMETHEUS_HOST</code>, <code>GRAFANA_HOST</code>, <code>GRAFANA_PORT</code> and <code>GPU_INFO_SSH_USER</code> still override the
+profile for a single run, as do <code>launch_sweep.py</code>'s matching flags.</p>
+<p>A profile reached through <code>base_url</code> has no <code>host</code> for the two to fall back to, so it names them
+itself; a sweep that cannot resolve them stops before its first row.</p>
 <h3 id="coverage">Coverage<a class="headerlink" href="#coverage" title="Permanent link">#</a></h3>
 <p><code>coverage</code> is what the assertions check: how many hosts, GPUs and communicators must actually
 report telemetry during a run.</p>
@@ -1533,9 +1575,9 @@ catches a dead decode pool.</p>
 <h4 id="reading-coverage-from-a-running-cluster">Reading coverage from a running cluster<a class="headerlink" href="#reading-coverage-from-a-running-cluster" title="Permanent link">#</a></h4>
 <p>Rather than predicting the numbers, run once and read them back. The profiler labels every
 series with <code>hostname</code>, <code>gpu_pci_bus_id</code>, <code>gpu_uuid</code>, <code>rank</code>, <code>local_rank</code> and <code>communicator</code>:</p>
-<div class="language-text highlight"><span class="filename">Prometheus queries</span><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>sum by (hostname) (nccl_profiler_collective_bytes_total)
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>sum by (hostname, gpu_pci_bus_id) (nccl_profiler_collective_bytes_total)
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>sum by (communicator) (nccl_profiler_collective_bytes_total)
+<div class="language-text highlight"><span class="filename">Prometheus queries</span><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>sum by (hostname) (nccl_profiler_collective_bytes_total)
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>sum by (hostname, gpu_pci_bus_id) (nccl_profiler_collective_bytes_total)
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>sum by (communicator) (nccl_profiler_collective_bytes_total)
 </span></code></pre></div>
 <div class="admonition warning">
 <p class="admonition-title">Warning</p>
@@ -1567,8 +1609,8 @@ before reading anything into a failing run.</p>
 <h3 id="querying-profiles-from-other-tooling">Querying profiles from other tooling<a class="headerlink" href="#querying-profiles-from-other-tooling" title="Permanent link">#</a></h3>
 <p>If your environment drives its own deployment, these avoid re-implementing profile parsing and
 path resolution:</p>
-<div class="language-bash highlight"><span class="filename">Query the profiles on a search path</span><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>python<span class="w"> </span>-m<span class="w"> </span>profiler_otel.profiles<span class="w"> </span>list<span class="w"> </span><span class="o">[</span>--profile-dir<span class="w"> </span>DIR<span class="w"> </span>...<span class="o">]</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>python<span class="w"> </span>-m<span class="w"> </span>profiler_otel.profiles<span class="w"> </span>compose-file<span class="w"> </span>NAME<span class="w"> </span><span class="o">[</span>--profile-dir<span class="w"> </span>DIR<span class="w"> </span>...<span class="o">]</span>
+<div class="language-bash highlight"><span class="filename">Query the profiles on a search path</span><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>python<span class="w"> </span>-m<span class="w"> </span>profiler_otel.profiles<span class="w"> </span>list<span class="w"> </span><span class="o">[</span>--profile-dir<span class="w"> </span>DIR<span class="w"> </span>...<span class="o">]</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>python<span class="w"> </span>-m<span class="w"> </span>profiler_otel.profiles<span class="w"> </span>compose-file<span class="w"> </span>NAME<span class="w"> </span><span class="o">[</span>--profile-dir<span class="w"> </span>DIR<span class="w"> </span>...<span class="o">]</span>
 </span></code></pre></div>
 <p><code>compose-file</code> prints an absolute path, or nothing at all with a zero exit status when the
 profile is externally deployed — so empty output means there is nothing to bring up. An unknown
@@ -1576,7 +1618,7 @@ profile exits non-zero and writes to standard error, so it cannot be mistaken fo
 <h3 id="validating-profiles">Validating profiles<a class="headerlink" href="#validating-profiles" title="Permanent link">#</a></h3>
 <p>Profiles are parsed into pydantic models, so a malformed one fails when it loads rather than
 part-way through a run. Validation needs no hardware:</p>
-<div class="language-bash highlight"><span class="filename">Validate a directory of profiles</span><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>uv<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span>profiler_otel/test_profiles.py<span class="w"> </span>--profile-dir<span class="w"> </span>/path/to/your/profiles
+<div class="language-bash highlight"><span class="filename">Validate a directory of profiles</span><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>uv<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span>profiler_otel/test_profiles.py<span class="w"> </span>--profile-dir<span class="w"> </span>/path/to/your/profiles
 </span></code></pre></div>
 <p>Errors name the profile and the field path, for example
 <code>coverage.gpus: 99 exceeds the 16 GPUs the hardware provides</code>. What is checked:</p>
