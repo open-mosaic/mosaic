@@ -335,9 +335,9 @@ class TestNCCLProfilerTelemetry:
         # Counted by *increase*, not by presence. Every containerised workload exports under
         # these same metric names, and the collector keeps republishing a series long after its
         # container is gone, so simply being present says nothing about this workload.
+        _settle_and_snapshot(reporter, prometheus_url, [probe], timeouts.quiesce)
         baseline_by_gpu = metric_totals_by_gpu(prometheus_url, probe)
         baseline_by_comm = metric_totals_by(prometheus_url, probe, label="communicator")
-        _settle_and_snapshot(reporter, prometheus_url, [probe], timeouts.quiesce)
 
         workload_result = _run_workload(reporter, inferencex_workload, timeouts.workload)
 
