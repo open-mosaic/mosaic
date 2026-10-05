@@ -1,6 +1,6 @@
 ---
 icon: fontawesome/solid/rocket
-title: Quick Start
+title: Quick Start on Docker
 ---
 
 <!--
@@ -9,6 +9,7 @@ SPDX-License-Identifier: Apache-2.0
 -->
 
 This guide will help you set up Mosaic to monitor collective metrics across multiple GPUs using vLLM and Ray.
+To deploy on Kubernetes instead, see [Quick Start on Kubernetes](./quickstart_k8s.md).
 
 # Prerequisites
 

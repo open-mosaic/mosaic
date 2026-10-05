@@ -19,6 +19,8 @@ cmake
 codebase
 cond
 config
+configmap
+configmaps
 cooldown
 cooldowns
 cpu
@@ -60,6 +62,7 @@ intents
 ip
 keychain
 kowalski
+kubectl
 kubernetes
 lgtm
 libgrpc
@@ -78,6 +81,8 @@ misdiagnosis
 mpi
 mpirun
 ms
+multus
+namespace
 natively
 ncabatoff
 nccl
@@ -121,6 +126,7 @@ timestamps
 todo
 tsdb
 ui
+uncomment
 uncorrectable
 unsynced
 uplink
