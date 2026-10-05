@@ -99,7 +99,8 @@ markdown_extensions:
 nav:
   - Getting Started:
     - Overview: index.md
-    - Quick Start: quickstart.md
+    - Quick Start on Docker: quickstart.md
+    - Quick Start on Kubernetes: quickstart_k8s.md
   - Concepts:
     - Architecture: architecture.md
     - Profiler Design: design.md

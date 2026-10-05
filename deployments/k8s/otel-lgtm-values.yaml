@@ -1,0 +1,167 @@
+# SPDX-FileCopyrightText: 2025 Delos Data Inc
+# SPDX-License-Identifier: Apache-2.0
+#
+# Values for the generic bjw-s app-template chart, running the grafana/otel-lgtm
+# all-in-one image (OTel collector, Prometheus, Loki, Tempo and Grafana), with
+# the pipeline analyzer as a sidecar in the same pod.
+#
+# The configuration files and dashboards are not copied into this file. They are
+# loaded from ConfigMaps created from the files in deployments/, see
+# docs/docs/quickstart_k8s.md.
+#
+#   helm repo add bjw-s https://bjw-s-labs.github.io/helm-charts
+#   helm install mosaic-otel-lgtm bjw-s/app-template --version 5.2.1 \
+#     -n mosaic -f deployments/k8s/otel-lgtm-values.yaml
+
+controllers:
+  main:
+    strategy: Recreate
+    pod:
+      # Prometheus needs the token for Kubernetes service discovery.
+      automountServiceAccountToken: true
+    serviceAccount:
+      identifier: main
+    containers:
+      main:
+        image:
+          repository: grafana/otel-lgtm
+          tag: "0.20.0"
+          pullPolicy: IfNotPresent
+        env:
+          GF_DASHBOARDS_MIN_REFRESH_INTERVAL: 1s
+          GF_AUTH_ANONYMOUS_ENABLED: "true"
+          GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+        probes:
+          readiness:
+            enabled: true
+            custom: true
+            spec:
+              httpGet:
+                path: /api/health
+                port: 3000
+              initialDelaySeconds: 10
+              periodSeconds: 10
+      # Reads the collector's Prometheus exporter and is scraped by Prometheus,
+      # both over localhost (see prometheus-k8s.yaml).
+      pipeline-analyzer:
+        image:
+          repository: openmosaic/pipeline-analyzer
+          tag: latest
+          # Always, so nodes pick up new "latest" images when the pod restarts.
+          pullPolicy: Always
+        env:
+          METRICS_ENDPOINT: http://localhost:8889/metrics
+          PORT: "5000"
+        probes:
+          readiness:
+            enabled: true
+            custom: true
+            spec:
+              httpGet:
+                path: /health
+                port: 5000
+              periodSeconds: 30
+          liveness:
+            enabled: true
+            custom: true
+            spec:
+              httpGet:
+                path: /health
+                port: 5000
+              periodSeconds: 30
+
+serviceAccount:
+  main: {}
+
+# Prometheus discovers annotated pods (kubernetes-pods job in prometheus-k8s.yaml).
+rbac:
+  roles:
+    main:
+      type: Role
+      rules:
+        - apiGroups: [""]
+          resources: [pods]
+          verbs: [get, list, watch]
+  bindings:
+    main:
+      type: RoleBinding
+      roleRef:
+        identifier: main
+      subjects:
+        - identifier: main
+
+service:
+  main:
+    # Fixed name; workloads send telemetry to http://mosaic-otel-lgtm:4318.
+    forceRename: mosaic-otel-lgtm
+    controller: main
+    ports:
+      grafana:
+        port: 3000
+        primary: true
+      loki:
+        port: 3100
+      otlp-grpc:
+        port: 4317
+      otlp-http:
+        port: 4318
+      otel-metrics:
+        port: 8889
+      prometheus:
+        port: 9090
+      pipeline-analyzer:
+        port: 5000
+
+persistence:
+  # kubectl -n mosaic create configmap mosaic-otel-lgtm-config --from-file=...
+  config:
+    type: configMap
+    name: mosaic-otel-lgtm-config
+    advancedMounts:
+      main:
+        main:
+          - path: /otel-lgtm/otelcol-config.yaml
+            subPath: otelcol-config.yaml
+          - path: /otel-lgtm/prometheus.yaml
+            subPath: prometheus.yaml
+          - path: /otel-lgtm/loki-config.yaml
+            subPath: loki-config.yaml
+          - path: /otel-lgtm/recording-rules.yaml
+            subPath: recording-rules.yaml
+          - path: /etc/grafana/grafana.ini
+            subPath: grafana.ini
+          - path: /otel-lgtm/grafana/conf/provisioning/dashboards/dashboards.yml
+            subPath: dashboards.yml
+
+  # One ConfigMap per dashboard keeps each under the 1 MiB ConfigMap limit.
+  # Keep this list in sync with deployments/dashboards/*.json.
+  dashboards:
+    type: custom
+    volumeSpec:
+      projected:
+        sources:
+          - configMap: { name: mosaic-dashboard-amd-overall-status }
+          - configMap: { name: mosaic-dashboard-disaggregated }
+          - configMap: { name: mosaic-dashboard-mosaic }
+          - configMap: { name: mosaic-dashboard-nccl-profiler-comprehensive }
+          - configMap: { name: mosaic-dashboard-nccl-troubleshooting }
+          - configMap: { name: mosaic-dashboard-node-exporter-full }
+          - configMap: { name: mosaic-dashboard-node-exporter-infiniband }
+          - configMap: { name: mosaic-dashboard-system-details-amd }
+          - configMap: { name: mosaic-dashboard-system-details-nvidia }
+    advancedMounts:
+      main:
+        main:
+          - path: /var/lib/grafana/dashboards
+            readOnly: true
+
+  # Metrics, logs and traces. Replace with a PVC to keep data across restarts:
+  #   type: persistentVolumeClaim
+  #   accessMode: ReadWriteOnce
+  #   size: 20Gi
+  data:
+    type: emptyDir
+    advancedMounts:
+      main:
+        main:
+          - path: /data

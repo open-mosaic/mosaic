@@ -1,0 +1,91 @@
+# SPDX-FileCopyrightText: 2025 Delos Data Inc
+# SPDX-License-Identifier: Apache-2.0
+# Prometheus Configuration for Kubernetes
+# Same as ../prometheus.yaml, plus discovery of annotated pods in the
+# mosaic namespace. Mounted into otel-lgtm through the mosaic-otel-lgtm-config
+# ConfigMap.
+
+global:
+  scrape_interval: 1s      # Scrape every 1 second (default is 15s)
+  evaluation_interval: 1s  # Evaluate rules every 1 second
+  scrape_timeout: 1s       # Timeout for scrapes
+
+scrape_configs:
+  # Scrape the OpenTelemetry Collector's Prometheus exporter
+  - job_name: 'otel-collector'
+    static_configs:
+      - targets: ['localhost:8889']
+    scrape_interval: 5s
+    scrape_timeout: 5s
+
+  # Scrape Prometheus itself (for monitoring)
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+    scrape_interval: 5s
+
+  # Scrape Pipeline Analyzer, a sidecar in the otel-lgtm pod
+  - job_name: 'pipeline-analyzer'
+    static_configs:
+      - targets: ['localhost:5000']
+    metrics_path: '/metrics/pipelines'
+    scrape_interval: 10s
+    scrape_timeout: 5s
+
+  # Scrape Rank Mapping
+  - job_name: 'rank-mapping'
+    static_configs:
+      - targets: ['localhost:5000']
+    metrics_path: '/metrics/rank_mapping'
+    scrape_interval: 10s
+    scrape_timeout: 5s
+
+  # Discover pods annotated with mosaic.io/scrape: "true". The job and host
+  # labels match the file service discovery naming that the dashboards expect
+  # (job=<job>-<node>, host=<node>).
+  - job_name: 'kubernetes-pods'
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names: ['mosaic']
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_annotation_mosaic_io_scrape]
+        action: keep
+        regex: "true"
+      - source_labels: [__meta_kubernetes_pod_phase]
+        action: drop
+        regex: Pending|Succeeded|Failed
+      - source_labels: [__address__, __meta_kubernetes_pod_annotation_mosaic_io_port]
+        action: replace
+        regex: '([^:]+)(?::\d+)?;(\d+)'
+        replacement: $1:$2
+        target_label: __address__
+      - source_labels: [__meta_kubernetes_pod_annotation_mosaic_io_path]
+        action: replace
+        regex: (.+)
+        target_label: __metrics_path__
+      - source_labels: [__meta_kubernetes_pod_annotation_mosaic_io_scrape_interval]
+        action: replace
+        regex: (.+)
+        target_label: __scrape_interval__
+      - source_labels: [__meta_kubernetes_pod_annotation_mosaic_io_scrape_timeout]
+        action: replace
+        regex: (.+)
+        target_label: __scrape_timeout__
+      - source_labels: [__meta_kubernetes_pod_node_name]
+        action: replace
+        target_label: host
+      - source_labels: [__meta_kubernetes_pod_annotation_mosaic_io_job, __meta_kubernetes_pod_node_name]
+        action: replace
+        separator: "-"
+        target_label: job
+
+  # File Service Discovery for scrape sources outside the cluster
+  - job_name: 'file-service-discovery'
+    file_sd_configs:
+    - files:
+      - '/otel-lgtm/file_sd_configs/*.yaml'
+      refresh_interval: 2m
+
+rule_files:
+  - "recording-rules.yaml"

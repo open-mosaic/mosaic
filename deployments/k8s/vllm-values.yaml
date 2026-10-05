@@ -1,0 +1,78 @@
+# SPDX-FileCopyrightText: 2025 Delos Data Inc
+# SPDX-License-Identifier: Apache-2.0
+#
+# Values for the upstream vLLM production-stack chart (vllm/vllm-stack).
+# Serves the Mosaic vLLM reference workload with the NCCL profiler plugin.
+#
+#   helm repo add vllm https://vllm-project.github.io/production-stack
+#   helm install mosaic-vllm vllm/vllm-stack --version 0.1.13 \
+#     -n mosaic -f deployments/k8s/vllm-values.yaml
+
+# Single model, so talk to the engine service directly instead of the router.
+routerSpec:
+  enableRouter: false
+
+servingEngineSpec:
+  # Always, so nodes pick up new "latest" images when the pod restarts.
+  imagePullPolicy: Always
+  # Free the GPUs before a replacement pod starts.
+  strategy:
+    type: Recreate
+  # Allow up to 30 minutes for the model download and load.
+  startupProbe:
+    periodSeconds: 30
+    failureThreshold: 60
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+
+  modelSpec:
+    - name: qwen3-8b
+      repository: openmosaic/mosaic-vllm
+      tag: latest
+      modelURL: Qwen/Qwen3-8B
+      replicaCount: 1
+
+      requestCPU: 8
+      requestMemory: 32Gi
+      requestGPU: 2
+
+      # Hugging Face model cache, mounted at /data (HF_HOME).
+      pvcStorage: 50Gi
+      # /dev/shm for NCCL; the chart only mounts it when tensorParallelSize is set.
+      shmSize: 16Gi
+
+      vllmConfig:
+        tensorParallelSize: 2
+        # vLLM's default; the chart otherwise passes --no-enable-prefix-caching.
+        enablePrefixCaching: true
+        gpuMemoryUtilization: 0.8
+        extraArgs:
+          - --disable-custom-all-reduce
+          - --enforce-eager
+          - --enable-mfu-metrics
+
+      env:
+        # OTLP/HTTP endpoint of the otel-lgtm service (see otel-lgtm-values.yaml).
+        - name: NCCL_PROFILER_OTEL_TELEMETRY_ENDPOINT
+          value: http://mosaic-otel-lgtm:4318
+        - name: VLLM_LOGGING_LEVEL
+          value: DEBUG
+        # Uncomment if vLLM hangs on "Waiting for 1 local, 0 remote core engine proc(s)".
+        # - name: NCCL_P2P_DISABLE
+        #   value: "1"
+
+      # Hugging Face token for gated models:
+      #   kubectl -n mosaic create secret generic hf-token --from-literal=token=<token>
+      # hf_token:
+      #   secretName: hf-token
+      #   secretKey: token
+
+      # Scraped by the kubernetes-pods job in deployments/k8s/prometheus-k8s.yaml.
+      podAnnotations:
+        mosaic.io/scrape: "true"
+        mosaic.io/job: vllm
+        mosaic.io/port: "8000"
+        mosaic.io/scrape-interval: 10s
+        mosaic.io/scrape-timeout: 5s
