@@ -406,7 +406,7 @@ def report_environment(request, workload_profile, prometheus_url, grafana_url) -
     the selected tests happen to request.
     """
     request.config.mosaic_reporter.set_environment(
-        environment_rows(workload_profile, prometheus_url, grafana_url)
+        environment_rows(request.config, workload_profile, prometheus_url, grafana_url)
     )
 
 

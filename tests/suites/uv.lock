@@ -951,8 +951,8 @@ wheels = [
 
 [[package]]
 name = "production-test-framework"
-version = "0.3.1.dev46+g2915f10f0"
-source = { git = "https://github.com/open-mosaic/production-test-framework.git#2915f10f0b5336b04457b13cb9a0f038a54c05ef" }
+version = "0.3.1.dev56+g2ee258368"
+source = { git = "https://github.com/open-mosaic/production-test-framework.git#2ee2583688cabb9dd3e799b1a76fa2434738e7d4" }
 dependencies = [
     { name = "ansible-core" },
     { name = "docopt" },

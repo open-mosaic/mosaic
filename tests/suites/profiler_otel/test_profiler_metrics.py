@@ -10,8 +10,11 @@ import time
 
 import pytest
 import requests
-from production_test_framework.vllm import InferenceResult
-from production_test_framework.workload.inferencex_workload import InferencexBenchmarkResult
+from production_test_framework.reporting import (
+    format_delta,
+    format_value,
+    report_workload_result,
+)
 from production_test_framework.workload.workload import WorkloadStatus
 
 from profiler_otel.conftest import (
@@ -23,23 +26,12 @@ from profiler_otel.conftest import (
     metric_totals_by_gpu,
     wait_for_metrics_quiesced,
 )
-from profiler_otel.environment import benchmark_option_rows
-from profiler_otel.reporting import (
-    CoverageStatus,
-    MetricStatus,
-    format_delta,
-    format_duration,
-    format_number,
-    format_value,
-)
+from profiler_otel.status import STATUS_CLASSES, CoverageStatus, MetricStatus
 
 # =============================================================================
 # NCCL Profiler Telemetry Tests
 # =============================================================================
-#
-# Timeouts come from the active profile (``timeouts:`` in its YAML), because they differ by an
-# order of magnitude between a 2-GPU CI box and a 96-GPU cluster: how long a workload runs, how
-# long its metrics take to reach Prometheus, and how long the totals take to settle.
+
 
 METRICS_POLL_INTERVAL = 2  # seconds
 
@@ -67,61 +59,7 @@ def _run_workload(reporter, workload, timeout):
 
     workload_result = workload.get_result()
 
-    name = getattr(workload, "workload_name", type(workload).__name__)
-    match workload_result.result:
-        case str() as text:
-            reporter.note(f"Workload result -- {name}: {text}")
-        case InferenceResult() as inference:
-            reporter.table(
-                ["measure", "value"],
-                [
-                    ["characters generated", str(len(inference.text))],
-                    ["usage", str(inference.usage)],
-                    ["runtime", format_duration(workload_result.runtime)],
-                    ["text", inference.text],
-                ],
-                title=f"Workload result -- {name}",
-                left={1},
-            )
-        case InferencexBenchmarkResult() as bench:
-            latency = bench.latency_ms
-
-            reporter.table(
-                ["option", "value", "benchmark_serving.py flag"],
-                benchmark_option_rows(workload.benchmark_options),
-                title=f"Workload configuration -- {name}",
-                left={2},
-            )
-
-            reporter.table(
-                ["measure", "value", "unit"],
-                [
-                    ["requests completed", format_number(bench.successful_requests, ",d"), ""],
-                    ["benchmark duration (timed requests)", format_duration(bench.duration_seconds), ""],
-                    ["tokens in (prompt)", format_number(bench.total_input_tokens, ",d"), "tokens"],
-                    ["tokens out (generated)", format_number(bench.total_generated_tokens, ",d"), "tokens"],
-                    ["throughput (requests)", format_number(bench.request_throughput), "req/s"],
-                    [
-                        "throughput (prompt+generated)",
-                        format_number(bench.total_token_throughput),
-                        "tok/s",
-                    ],
-                    [
-                        "throughput (generated only)",
-                        format_number(bench.output_token_throughput),
-                        "tok/s",
-                    ],
-                    ["TTFT mean", format_number(latency.get("mean_ttft")), "ms"],
-                    ["TTFT p99", format_number(latency.get("p99_ttft")), "ms"],
-                    ["TPOT mean", format_number(latency.get("mean_tpot")), "ms"],
-                    ["TPOT p99", format_number(latency.get("p99_tpot")), "ms"],
-                    ["container wall time (incl. startup/teardown)", format_duration(workload_result.runtime), ""],
-                ],
-                title=f"Workload result -- {name}",
-                left={2},
-            )
-        case None:
-            reporter.note(f"Workload result -- {name}: no result (stopped, or no parseable output)")
+    report_workload_result(reporter, workload, workload_result)
 
     assert workload_result.status == WorkloadStatus.COMPLETED, (
         f"Inference must succeed before checking metrics; status was "
@@ -253,8 +191,6 @@ class TestNCCLProfilerTelemetry:
             timeouts.metrics_available,
         )
 
-        # One row per expected metric, in the profile's order, so the table is the whole story:
-        # what each total was, what it became, and for anything that did not move, which of the
         rows = []
         statuses: dict[str, MetricStatus] = {}
         for metric_name in nccl_profiler_metrics:
@@ -289,6 +225,7 @@ class TestNCCLProfilerTelemetry:
             ),
             left={5},
             status_column=5,
+            status_classes=STATUS_CLASSES,
         )
 
         if missing_metrics:
@@ -298,6 +235,7 @@ class TestNCCLProfilerTelemetry:
                 title=f"Did not increase ({len(missing_metrics)} of {len(nccl_profiler_metrics)})",
                 left={1, 2},
                 status_column=1,
+                status_classes=STATUS_CLASSES,
             )
 
         assert not missing_metrics, (
@@ -326,15 +264,10 @@ class TestNCCLProfilerTelemetry:
         timeouts = workload_profile.timeouts
         metrics = expected_nccl_profiler_metrics(inferencex_workload, workload_profile)
 
-        # One metric is enough to establish who did work, and keeps the query cheap at high
-        # GPU counts. A counter is the most reliable of the family.
         probe = "nccl_profiler_collective_bytes_total"
         if probe not in metrics:
             probe = metrics[0]
 
-        # Counted by *increase*, not by presence. Every containerised workload exports under
-        # these same metric names, and the collector keeps republishing a series long after its
-        # container is gone, so simply being present says nothing about this workload.
         _settle_and_snapshot(reporter, prometheus_url, [probe], timeouts.quiesce)
         baseline_by_gpu = metric_totals_by_gpu(prometheus_url, probe)
         baseline_by_comm = metric_totals_by(prometheus_url, probe, label="communicator")
@@ -349,8 +282,6 @@ class TestNCCLProfilerTelemetry:
             comms = {name for name, total in by_comm.items() if metric_increased(baseline_by_comm.get(name), total)}
             return gpus, {host for host, _ in gpus}, comms
 
-        # Give the last GPUs' samples time to land before judging who is missing; export is
-        # chunky, and a whole workload's traffic can appear in a single scrape.
         deadline = time.monotonic() + timeouts.metrics_available
         while True:
             gpus, hosts, comms = active_participants()
@@ -381,6 +312,7 @@ class TestNCCLProfilerTelemetry:
             ),
             left={3},
             status_column=3,
+            status_classes=STATUS_CLASSES,
         )
 
         reporter.table(
@@ -416,6 +348,7 @@ class TestNCCLProfilerTelemetry:
                     title="Reporting a series but flat across this workload",
                     left={2},
                     status_column=2,
+                    status_classes=STATUS_CLASSES,
                 )
 
         assert not problems, (
@@ -437,8 +370,7 @@ class TestNCCLProfilerTelemetry:
         metrics = NCCL_PROFILER_METRICS_EXPECTED_PROMPT_WORKLOAD
         timeouts = workload_profile.timeouts
         quiesce_timeout = timeouts.quiesce
-        # Watch for as long as a real workload gets for its metrics to land, so a leak has
-        # the same opportunity to show up here as there.
+
         observation_period = timeouts.metrics_available
 
         baseline, settled = wait_for_metrics_quiesced(prometheus_url, metrics, timeout=quiesce_timeout)
@@ -479,6 +411,7 @@ class TestNCCLProfilerTelemetry:
             ),
             left={4},
             status_column=4,
+            status_classes=STATUS_CLASSES,
         )
         if leaky_hosts:
             reporter.table(
