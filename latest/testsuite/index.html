@@ -1738,8 +1738,12 @@ A single GPU will not produce NCCL metrics.</p>
 <td>Single completion request against the profile's endpoint</td>
 </tr>
 <tr>
+<td><code>inferencex_mode</code></td>
+<td><code>--inferencex-mode</code>: <code>agentic</code> (default) or <code>fixed</code></td>
+</tr>
+<tr>
 <td><code>inferencex_workload</code></td>
-<td>Benchmark run configured from the profile's <code>benchmark_options</code></td>
+<td>Benchmark run configured from the profile's <code>benchmark_options</code>, with <code>agentic_options</code> layered over them in agentic mode</td>
 </tr>
 <tr>
 <td><code>nccl_workload</code></td>
