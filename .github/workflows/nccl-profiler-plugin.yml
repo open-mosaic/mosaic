@@ -13,9 +13,9 @@ on:
   workflow_dispatch:
 
 env:
-  NCCL_TAG: "2.29.2-1"
+  NCCL_TAG: "2.32.3-1"
   OTEL_CPP_VERSION: "1.25.0"
-  CUDA_VERSION: "12.9.1" # Based on output from `nvcc --version` on vllm/vllm-openai:v0.13.0
+  CUDA_VERSION: "13.0.3" # Matches ARG CUDA_VERSION in vllm/vllm-openai:v0.32.0 (docker/Dockerfile)
   LCOV_VERSION: "2.4"
 jobs:
   check-paths:
@@ -124,7 +124,7 @@ jobs:
           sudo ldconfig
 
       - name: Install CUDA toolkit
-        uses: Jimver/cuda-toolkit@v0.2.30
+        uses: Jimver/cuda-toolkit@v0.2.36
         id: cuda-toolkit
         with:
           cuda: '${{ env.CUDA_VERSION }}'

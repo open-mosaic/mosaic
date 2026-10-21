@@ -5,16 +5,17 @@
 
 # To build:
 #   docker build -t openmosaic/mosaic-vllm:dev -f Dockerfile .
-# CUDA 13.0 base (vllm/vllm-openai:*-cu130):
-#   docker build -t openmosaic/mosaic-vllm:cu130 --build-arg VLLM_BASE_TAG=v0.19.0-cu130 -f Dockerfile .
+# The default vLLM base (vllm/vllm-openai:<version>) is CUDA 13.0.
+# CUDA 12.9 base (vllm/vllm-openai:*-cu129):
+#   docker build -t openmosaic/mosaic-vllm:cu129 --build-arg VLLM_BASE_TAG=v0.32.0-cu129 -f Dockerfile .
 # To build with specific NCCL tag:
 #   docker build -t openmosaic/mosaic-vllm:dev --build-arg NCCL_TAG=<nccl-tag> -f Dockerfile .
 # To run:
 #   docker run -it --rm openmosaic/mosaic-vllm:dev ray ...
 
-ARG NCCL_TAG=2.29.2-1
+ARG NCCL_TAG=2.32.3-1
 ARG OTEL_CPP_VERSION=v1.25.0
-ARG VLLM_BASE_TAG=v0.19.0
+ARG VLLM_BASE_TAG=v0.32.0
 
 # =============================================================================
 # vLLM base + build OTel, NCCL, plugin + install Ray
@@ -79,19 +80,30 @@ RUN pip install --upgrade pip
 # --- Upgrade packages to the latest version ---
 RUN apt-get update && apt-get upgrade -y
 
+# --- Runtime libraries for the profiler plugin (protobuf comes from libgrpc++-dev in the builder) ---
+RUN apt-get install -y --no-install-recommends libprotobuf32t64 && \
+    rm -rf /var/lib/apt/lists/*
+
 # --- Manually install Ray dependencies to avoid CVE-2026-0994 ---
 RUN pip install --upgrade protobuf==6.33.5
 
-# --- Manually install cryptography and pillow to avoid CVE-2026-26007, CVE-2026-25990 ---
+# --- Manually install cryptography to avoid CVE-2026-69247, CVE-2026-69249, GHSA-537c-gmf6-5ccf ---
 # FIXME: Remove this once components are updated to the latest version
-RUN pip install cryptography==46.0.5 pillow==12.2.0 
+RUN pip install cryptography==50.0.2
 
-# --- Additional forced dependency upgrades for CVEs: 2026-42561, 2026-44431, 2026-44432, and advisory: GHSA-82j2-j2ch-gfr8 ---
+# --- Additional forced dependency upgrades for CVEs: 2026-53539, 2026-97687, 2026-97689, and advisories: GHSA-4w2j-m93h-cj5j (uv), GHSA-6q48-6c7w-9gw2 (certifi) ---
 # FIXME: Remove this once components are updated to the latest version
-RUN pip install --upgrade python-multipart==0.0.27 urllib3==2.7.0 uv==0.11.14
+RUN pip install --upgrade python-multipart==0.0.32 urllib3==2.8.0 uv==0.13.4 certifi==2026.10.19
 
 # --- Install Ray (Python) ---
-RUN pip install "ray[default]==2.55.0"
+RUN pip install "ray[default]==2.59.0"
+
+# --- Pin the pip NCCL wheel (nvidia-nccl-cu12/cu13) to match the NCCL built above ---
+# torch loads its own pip NCCL, which may take precedence over /usr/local/plugins/lib.
+# --no-deps leaves torch untouched; pip will warn that torch pins an older NCCL.
+RUN NCCL_PKG=$(pip list --format=freeze | grep -o '^nvidia-nccl-cu[0-9]*') && \
+    test -n "${NCCL_PKG}" && \
+    pip install --no-deps "${NCCL_PKG}==${NCCL_TAG%-*}"
 
 RUN mkdir -p /usr/local/plugins/lib
 
@@ -100,6 +112,9 @@ COPY --from=builder /tmp/nccl/build/lib/* /usr/local/plugins/lib/
 COPY --from=builder /tmp/nccl-profiler-otel-plugin/build/libnccl-profiler-otel.so /usr/local/plugins/lib/
 
 RUN ( ldconfig || true )
+
+# --- Fail the build if the plugin has unresolved shared libraries ---
+RUN ! LD_LIBRARY_PATH=/usr/local/plugins/lib ldd /usr/local/plugins/lib/libnccl-profiler-otel.so | grep "not found"
 
 # --- Set environment variables ---
 ENV NCCL_VERSION=${NCCL_TAG}

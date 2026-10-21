@@ -14,6 +14,8 @@ SPDX-License-Identifier: Apache-2.0
     - Verify `NCCL_PROFILER_PLUGIN=otel` is set
     - Check that `LD_LIBRARY_PATH` includes the plugin directory
     - Ensure the plugin library exists and is executable
+    - With `NCCL_DEBUG=INFO`, look for `PROFILER/Plugin: libnccl-profiler-otel.so: ... cannot open shared object file`,
+      which means a library the plugin depends on is missing. Run `ldd` on the plugin to find it.
 
 2. **No metrics being sent**:
     - Verify `NCCL_PROFILER_OTEL_TELEMETRY_ENDPOINT` is correctly set
@@ -30,6 +32,17 @@ SPDX-License-Identifier: Apache-2.0
     - Increase window trigger settings if events are generated too quickly
     - Check that telemetry thread is processing windows in time
     - Verify system has sufficient CPU for background processing
+
+5. **No collective metrics with vLLM 0.29 or later**:
+    - vLLM has several all-reduce backends and only falls back to NCCL when none of them applies.
+      `--disable-custom-all-reduce` only disables vLLM's custom all-reduce, not the backends below.
+    - Since vLLM 0.29.0, FlashInfer all-reduce is enabled by default and bypasses NCCL.
+      Set `VLLM_ALLREDUCE_USE_FLASHINFER=0`.
+    - PyTorch symmetric-memory all-reduce is also enabled by default and bypasses NCCL on GPUs with
+      compute capability 9.0, 10.0, 10.3 or 10.7 (for example H100, H200, B200, GB200, B300).
+      On these GPUs, also set `VLLM_ALLREDUCE_USE_SYMM_MEM=0`.
+      Check the compute capability with `nvidia-smi --query-gpu=name,compute_cap --format=csv`.
+    - Routing all-reduces through NCCL can be slower than these backends for small messages.
 
 # Debug Logging
 

@@ -145,6 +145,21 @@ NCCL API Call (Coll/P2P)
 7. **ProxyOp Stop**: All steps for this channel complete
 8. **Total Collective Time** = `Coll START → Last ProxyOp STOP`
 
+## CUDA Graph Support
+
+Frameworks such as vLLM capture NCCL operations into CUDA graphs and replay them many times.
+The NCCL API is only called once, during capture, so the profiler can only observe a replay through events
+that NCCL emits at replay time. The NCCL version dictates which events are emitted during replay.
+
+**NCCL < 2.31**: NCCL only adds a host callback to the captured graph when the operation has proxy (network) work.
+Intra-node replays (NVLink, PCIe, shared memory) produce no profiler events, and only the capture itself is visible.
+Multi-node replays still produce `Coll`, `ProxyOp` and `ProxyStep` events. 
+To capture all events disable CUDA graph use in vLLM by passing the `--enforce-eager` flag.
+
+**NCCL >= 2.31**: NCCL also adds the host callback when `KernelCh` events are enabled.
+Every replay, including intra-node replays, emits the events below.
+A dedicated NCCL profiler thread reports `KernelCh` start and stop timestamps from the GPU for each replay.
+
 ## Circular Buffer Design
 
 The plugin uses a lock-free circular buffer design with 4 pre-allocated buffers per communicator:

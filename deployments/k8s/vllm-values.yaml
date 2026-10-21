@@ -50,7 +50,6 @@ servingEngineSpec:
         gpuMemoryUtilization: 0.8
         extraArgs:
           - --disable-custom-all-reduce
-          - --enforce-eager
           - --enable-mfu-metrics
 
       env:
@@ -59,6 +58,13 @@ servingEngineSpec:
           value: http://mosaic-alloy:4318
         - name: VLLM_LOGGING_LEVEL
           value: DEBUG
+        # vLLM uses FlashInfer allreduce by default (as of v0.29.0).
+        # Disable to use NCCL and include allreduce metrics in profiler.
+        - name: VLLM_ALLREDUCE_USE_FLASHINFER
+          value: "0"
+        # Uncomment if the GPU used supports symmetric-memory allreduce.
+        # - name: VLLM_ALLREDUCE_USE_SYMM_MEM
+        #   value: "0"
         # Uncomment if vLLM hangs on "Waiting for 1 local, 0 remote core engine proc(s)".
         # - name: NCCL_P2P_DISABLE
         #   value: "1"

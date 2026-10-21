@@ -44,7 +44,7 @@ docker run -it --rm openmosaic/mosaic-vllm:dev ray ...
 ### Prerequisites
 
 - **NVIDIA CUDA** 13.1 or compatible versions
-- **NCCL** 2.29.2-1 or compatible versions
+- **NCCL** 2.32.3-1 or compatible versions
 - The following apt packages:
 
     ``` bash
