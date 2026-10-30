@@ -1,0 +1,142 @@
+# SPDX-FileCopyrightText: 2025 Delos Data Inc
+# SPDX-License-Identifier: Apache-2.0
+#
+# Values for the Grafana chart (grafana-community/grafana), with Mimir, Loki
+# and Tempo datasources and the Mosaic dashboards.
+#
+# The dashboards are not copied into this file. They are loaded from one
+# ConfigMap per dashboard, created from deployments/dashboards/*.json, see
+# docs/docs/quickstart_k8s.md.
+#
+#   helm repo add grafana-community https://grafana-community.github.io/helm-charts
+#   helm install mosaic-grafana grafana-community/grafana --version 13.4.0 \
+#     -n mosaic -f deployments/k8s/grafana-values.yaml
+
+fullnameOverride: mosaic-grafana
+
+# Same settings as ../grafana.ini, plus anonymous access.
+grafana.ini:
+  dashboards:
+    # Minimum dashboard refresh interval (default is 5s)
+    min_refresh_interval: 1s
+  live:
+    # Enable Grafana Live for real-time streaming
+    max_connections: 100
+  # Anonymous users can view the dashboards. Sign in as admin to edit them.
+  auth.anonymous:
+    enabled: true
+    org_role: Viewer
+
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      # The dashboards refer to this datasource by its uid.
+      - name: Prometheus
+        type: prometheus
+        uid: prometheus
+        url: http://mosaic-mimir-gateway/prometheus
+        access: proxy
+        isDefault: true
+      - name: Loki
+        type: loki
+        uid: loki
+        url: http://mosaic-loki:3100
+        access: proxy
+      - name: Tempo
+        type: tempo
+        uid: tempo
+        url: http://mosaic-tempo-query-frontend:3200
+        access: proxy
+
+# Same providers as ../dashboards/dashboards.yml.
+dashboardProviders:
+  dashboardproviders.yaml:
+    apiVersion: 1
+    providers:
+      - name: "Mosaic"
+        type: file
+        orgId: 1
+        folder: "Mosaic"
+        options:
+          path: /var/lib/grafana/dashboards/mosaic.json
+          foldersFromFilesStructure: false
+      - name: "NCCL Profiler - Comprehensive"
+        type: file
+        orgId: 1
+        folder: "Mosaic"
+        options:
+          path: /var/lib/grafana/dashboards/nccl_profiler_comprehensive.json
+          foldersFromFilesStructure: false
+      - name: "NCCL Profiler - Troubleshooting"
+        type: file
+        orgId: 1
+        folder: "Mosaic"
+        options:
+          path: /var/lib/grafana/dashboards/nccl_troubleshooting.json
+          foldersFromFilesStructure: false
+      - name: "Overall Status"
+        type: file
+        orgId: 1
+        folder: "Experimental"
+        options:
+          path: /var/lib/grafana/dashboards/amd_overall_status.json
+          foldersFromFilesStructure: false
+      - name: "System Details - AMD"
+        type: file
+        orgId: 1
+        folder: "Experimental"
+        options:
+          path: /var/lib/grafana/dashboards/system_details_amd.json
+          foldersFromFilesStructure: false
+      - name: "System Details - NVIDIA"
+        type: file
+        orgId: 1
+        folder: "Mosaic"
+        options:
+          path: /var/lib/grafana/dashboards/system_details_nvidia.json
+          foldersFromFilesStructure: false
+      - name: "Node Exporter - Overall Status"
+        type: file
+        orgId: 1
+        folder: "Node Exporter"
+        options:
+          path: /var/lib/grafana/dashboards/node_exporter_full.json
+          foldersFromFilesStructure: false
+      - name: "Node Exporter - InfiniBand"
+        type: file
+        orgId: 1
+        folder: "Node Exporter"
+        options:
+          path: /var/lib/grafana/dashboards/node_exporter_infiniband.json
+          foldersFromFilesStructure: false
+      - name: "vLLM - Disaggregated Inference"
+        type: file
+        orgId: 1
+        folder: "Mosaic"
+        options:
+          path: /var/lib/grafana/dashboards/disaggregated.json
+          foldersFromFilesStructure: false
+
+# One ConfigMap per dashboard keeps each under the 1 MiB ConfigMap limit. The
+# chart's extraVolumes does not support projected volumes, so they are added
+# with extraContainerVolumes.
+# Keep this list in sync with deployments/dashboards/*.json.
+extraContainerVolumes:
+  - name: dashboards
+    projected:
+      sources:
+        - configMap: { name: mosaic-dashboard-amd-overall-status }
+        - configMap: { name: mosaic-dashboard-disaggregated }
+        - configMap: { name: mosaic-dashboard-mosaic }
+        - configMap: { name: mosaic-dashboard-nccl-profiler-comprehensive }
+        - configMap: { name: mosaic-dashboard-nccl-troubleshooting }
+        - configMap: { name: mosaic-dashboard-node-exporter-full }
+        - configMap: { name: mosaic-dashboard-node-exporter-infiniband }
+        - configMap: { name: mosaic-dashboard-system-details-amd }
+        - configMap: { name: mosaic-dashboard-system-details-nvidia }
+
+extraVolumeMounts:
+  - name: dashboards
+    mountPath: /var/lib/grafana/dashboards
+    readOnly: true

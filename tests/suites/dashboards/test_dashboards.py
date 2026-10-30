@@ -62,8 +62,7 @@ class TestGrafanaDashboards:
             try:
                 if path_obj.parent != _PROVISIONING_DIR:
                     errors.append(
-                        f"{path_str!r}: parent must be {_PROVISIONING_DIR} "
-                        f"(got {path_obj.parent})"
+                        f"{path_str!r}: parent must be {_PROVISIONING_DIR} (got {path_obj.parent})"
                     )
                     continue
             except ValueError:
@@ -101,7 +100,9 @@ class TestGrafanaDashboards:
                 "(is DASHBOARDS_DIR set and the directory mounted?)"
             )
 
-        dashboard_list_url = f"{grafana_url}/apis/dashboard.grafana.app/v1beta1/namespaces/default/dashboards"
+        dashboard_list_url = (
+            f"{grafana_url}/apis/dashboard.grafana.app/v1beta1/namespaces/default/dashboards"
+        )
         dashboard_list: list[str] = []
         params: dict[str, str] = {}
 
@@ -124,7 +125,9 @@ class TestGrafanaDashboards:
 
         # Verify that all expected dashboards are in the list
         for dashboard in expected_dashboard_filenames:
-            assert dashboard in dashboard_list, f"Grafana is missing expected dashboard: {dashboard}"
+            assert dashboard in dashboard_list, (
+                f"Grafana is missing expected dashboard: {dashboard}"
+            )
 
     def test_each_dashboard_loads(
         self,
@@ -172,9 +175,8 @@ class TestGrafanaDashboards:
             except requests.exceptions.RequestException as e:
                 failed.append((uid, title, str(e)))
 
-        assert not failed, (
-            "One or more dashboards failed to load: "
-            + "; ".join(f"{t} (uid={u}): {msg}" for u, t, msg in failed)
+        assert not failed, "One or more dashboards failed to load: " + "; ".join(
+            f"{t} (uid={u}): {msg}" for u, t, msg in failed
         )
 
     def _dashboard_list_from_json(self, dashboard_json: dict[str, Any]) -> list[str]:
@@ -186,7 +188,7 @@ class TestGrafanaDashboards:
                 dashboard_path = Path(annotations["grafana.app/sourcePath"]).name
                 dashboards.append(dashboard_path)
         return dashboards
-    
+
     def _more_dashboards_available(self, dashboard_json: dict[str, Any]) -> dict[str, str] | None:
         if "continue" in dashboard_json["metadata"]:
             return {"continue": dashboard_json["metadata"]["continue"]}

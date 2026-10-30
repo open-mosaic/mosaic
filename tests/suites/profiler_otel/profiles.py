@@ -26,6 +26,10 @@ from pathlib import Path
 from typing import Annotated, Any
 
 import yaml
+from production_test_framework.workload.inferencex_workload import (
+    InferencexMode,
+    inferencex_options,
+)
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -232,6 +236,7 @@ class Profile(_Model):
     timeouts: Timeouts
     expected_metrics: MetricSet
     benchmark_options: dict[str, Any]
+    agentic_options: dict[str, Any] | None = None
     otel_endpoint: Text | None = None
     compose_file: Path | None = None
 
@@ -239,6 +244,10 @@ class Profile(_Model):
     def is_external(self) -> bool:
         """True when the deployment is stood up out of band, so setup does not apply."""
         return self.deployment.external
+
+    def inferencex_options(self, mode: InferencexMode) -> dict[str, Any]:
+        """The benchmark options for *mode*, as a fresh dict the caller may extend."""
+        return inferencex_options(self.benchmark_options, self.agentic_options, mode)
 
 
 class _ProfileSpec(_Model):
@@ -253,6 +262,7 @@ class _ProfileSpec(_Model):
     timeouts: Timeouts
     expected_metrics: MetricSet
     benchmark_options: dict[str, Any]
+    agentic_options: dict[str, Any] | None = None
     otel_endpoint: Text | None = None
 
     @model_validator(mode="after")

@@ -1,0 +1,24 @@
+{{/*
+SPDX-FileCopyrightText: 2025 Delos Data Inc
+SPDX-License-Identifier: Apache-2.0
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "pipeline-analyzer.fullname" . }}
+  labels:
+    {{- include "pipeline-analyzer.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "pipeline-analyzer.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: 5000
+      targetPort: http
+    - name: otlp-grpc
+      port: 4317
+      targetPort: otlp-grpc
+    - name: otlp-http
+      port: 4318
+      targetPort: otlp-http

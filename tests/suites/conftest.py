@@ -2,11 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import os
-from pathlib import Path
 
 import pytest
+from production_test_framework.workload.inferencex_workload import (
+    DEFAULT_INFERENCEX_MODE,
+    InferencexMode,
+)
 
-from profiler_otel.reporting import ReportFormat, Reporter, ReportPlugin
+pytest_plugins = ["production_test_framework.reporting.report_plugin"]
 
 
 DEFAULT_PROFILE = "default"
@@ -37,52 +40,24 @@ def pytest_addoption(parser):
         ),
     )
     group.addoption(
-        "--report-file",
-        "--report-html",
+        "--inferencex-mode",
         action="store",
-        default=None,
-        metavar="PATH",
-        dest="report_file",
+        default=DEFAULT_INFERENCEX_MODE.value,
+        choices=[mode.value for mode in InferencexMode],
         help=(
-            "Write one report to PATH: the run summary followed by the result tables the "
-            "tests emit. Without this the same tables print to stdout, which is what CI and "
-            "a bare pytest run want. --report-html is kept as an alias."
-        ),
-    )
-    group.addoption(
-        "--report-format",
-        action="store",
-        default=None,
-        choices=[fmt.value for fmt in ReportFormat],
-        help=(
-            "Format for --report-file: html (default) or md. Left off, a .md or .markdown "
-            "path infers md and anything else html."
+            "Load shape for the InferenceX workload: 'fixed' runs the profile's "
+            "benchmark_options as written; 'agentic' layers its agentic_options over them "
+            f"(default: {DEFAULT_INFERENCEX_MODE.value})."
         ),
     )
 
 
 def pytest_configure(config):
-    """Register custom markers to avoid warnings, and open the report."""
+    """Register custom markers to avoid warnings."""
     config.addinivalue_line("markers", "profiler_otel: marks tests as NCCL profiler OTEL tests")
-    config.addinivalue_line("markers", "dashboards: marks tests as Grafana dashboards integration tests")
-
-    raw_path = config.getoption("report_file")
-    path = Path(raw_path).expanduser() if raw_path else None
-    chosen = config.getoption("report_format")
-    fmt = ReportFormat(chosen) if chosen else (ReportFormat.for_path(path) if path else ReportFormat.HTML)
-
-    config.mosaic_reporter = Reporter(path, fmt=fmt)
-    config.pluginmanager.register(ReportPlugin(config.mosaic_reporter), "mosaic-report")
-
-
-@pytest.fixture
-def reporter(request):
-    """
-    The session's :class:`report.Reporter`, with a detail section open for this test.
-    """
-    instance = request.config.mosaic_reporter
-    instance.start_test(request.node.nodeid)
-    return instance
+    config.addinivalue_line(
+        "markers", "dashboards: marks tests as Grafana dashboards integration tests"
+    )
 
 
 @pytest.fixture(scope="session")

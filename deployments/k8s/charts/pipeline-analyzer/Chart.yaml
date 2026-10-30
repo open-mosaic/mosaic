@@ -1,0 +1,14 @@
+# SPDX-FileCopyrightText: 2025 Delos Data Inc
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: v2
+name: pipeline-analyzer
+description: >-
+  Mosaic pipeline analyzer, with an OpenTelemetry Collector sidecar that
+  exposes the NCCL profiler metrics it analyzes.
+type: application
+version: 0.1.0
+appVersion: 1.0.1
+home: https://github.com/open-mosaic/mosaic
+sources:
+  - https://github.com/open-mosaic/mosaic/tree/main/deployments/pipeline-analyzer

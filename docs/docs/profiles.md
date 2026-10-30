@@ -67,6 +67,7 @@ the deployment configuration it refers to can be moved into another repository t
 | `timeouts` | `workload`, `metrics_available` and `quiesce`, in seconds |
 | `expected_metrics` | Names a metric list defined in the suite's `conftest.py` |
 | `benchmark_options` | Passed verbatim to the benchmark workload |
+| `agentic_options` | Optional. Layered over `benchmark_options` unless the run passes `--inferencex-mode fixed` |
 
 ### Benchmark options
 
@@ -82,6 +83,28 @@ single frontend sets `base_url` and clears the host and port:
 endpoint:
   base_url: "http://frontend:8000"
 ```
+
+### Agentic load
+
+By default the InferenceX workload runs in agentic mode, shaped like the traffic an agent produces:
+long prompts that share a prefix, as an agent re-sends its growing context each turn, and short
+answers, as a tool call is. The mode layers `agentic_options` over `benchmark_options`, so a key
+in both takes the agentic value and flags such as `ignore_eos` carry over unchanged. A profile
+without `agentic_options` gets `DEFAULT_AGENTIC_OPTIONS` from the production test framework's
+InferenceX workload. Pass `--inferencex-mode fixed` to run `benchmark_options` as written and
+ignore `agentic_options`.
+
+```yaml title="Sizing the agentic load for a larger machine"
+agentic_options:
+  num_prompts: 128
+  max_concurrency: 16
+  random_input_len: 8192
+  random_output_len: 64
+  random_prefix_len: 1024
+  random_range_ratio: 0.5
+```
+
+The server's maximum context length must cover `random_input_len` plus `random_output_len`.
 
 ### The cluster's own addresses
 

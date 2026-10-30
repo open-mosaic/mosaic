@@ -1,0 +1,70 @@
+# SPDX-FileCopyrightText: 2025 Delos Data Inc
+# SPDX-License-Identifier: Apache-2.0
+#
+# Values for the Mosaic pipeline analyzer chart. Installed from a clone of the
+# repository:
+#
+#   helm install mosaic-pipeline-analyzer ./deployments/k8s/charts/pipeline-analyzer -n mosaic
+#
+# The analyzer reads NCCL profiler metrics in the Prometheus text format from
+# the collector sidecar (localhost:8889). Alloy forwards OTLP metrics to the
+# sidecar and scrapes the analyzer on port 5000.
+
+nameOverride: ""
+# Fixed name; Alloy sends metrics to and scrapes mosaic-pipeline-analyzer.
+fullnameOverride: mosaic-pipeline-analyzer
+
+image:
+  repository: openmosaic/pipeline-analyzer
+  # Defaults to the chart's appVersion, the pipeline analyzer release the chart
+  # is tested with. Set to "latest" to follow the most recent image.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+collector:
+  image:
+    repository: otel/opentelemetry-collector-contrib
+    tag: "0.162.0"
+    pullPolicy: IfNotPresent
+  # Same as ../../../otel-collector-config.yaml, used by docker compose.
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+    processors:
+      batch:
+        timeout: 1s
+        send_batch_size: 100
+        send_batch_max_size: 500
+    exporters:
+      # Read by the pipeline analyzer over localhost.
+      prometheus:
+        endpoint: 0.0.0.0:8889
+        send_timestamps: true
+        metric_expiration: 5m
+        resource_to_telemetry_conversion:
+          enabled: true
+    service:
+      pipelines:
+        metrics:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [prometheus]
+  resources: {}
+
+service:
+  type: ClusterIP
+
+resources: {}
+
+podAnnotations: {}
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}

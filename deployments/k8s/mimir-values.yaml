@@ -1,0 +1,94 @@
+# SPDX-FileCopyrightText: 2025 Delos Data Inc
+# SPDX-License-Identifier: Apache-2.0
+#
+# Values for the Grafana Mimir chart (grafana/mimir-distributed), the metrics
+# backend of the LGTMA stack.
+#
+#   helm repo add grafana https://grafana.github.io/helm-charts
+#   helm install mosaic-mimir grafana/mimir-distributed --version 6.2.1 \
+#     -n mosaic -f deployments/k8s/mimir-values.yaml \
+#     --set-file recordingRules=deployments/recording-rules.yaml
+#
+# Prometheus API (Grafana): http://mosaic-mimir-gateway/prometheus
+# Remote write (Alloy):     http://mosaic-mimir-gateway/api/v1/push
+
+fullnameOverride: mosaic-mimir
+
+mimir:
+  structuredConfig:
+    # Single tenant ("anonymous"), so clients do not send X-Scope-OrgID.
+    multitenancy_enabled: false
+    limits:
+      # The NCCL profiler produces many series at a high rate.
+      ingestion_rate: 100000
+      ingestion_burst_size: 1000000
+    ruler:
+      # Pick up recording rule changes quickly after a helm upgrade.
+      poll_interval: 1m
+    # Recording rules are read from the mosaic-mimir-rules ConfigMap below,
+    # laid out as <directory>/<tenant>/<file>.
+    ruler_storage:
+      backend: local
+      local:
+        directory: /mimir-rules
+
+alertmanager:
+  enabled: false
+
+rollout_operator:
+  enabled: false
+
+overrides_exporter:
+  enabled: false
+
+ingester:
+  replicas: 1
+  zoneAwareReplication:
+    enabled: false
+
+store_gateway:
+  replicas: 1
+  zoneAwareReplication:
+    enabled: false
+
+querier:
+  replicas: 1
+
+query_scheduler:
+  replicas: 1
+
+ruler:
+  extraVolumes:
+    - name: rules
+      configMap:
+        name: mosaic-mimir-rules
+        items:
+          - key: recording-rules.yaml
+            path: anonymous/recording-rules.yaml
+  extraVolumeMounts:
+    - name: rules
+      mountPath: /mimir-rules
+      readOnly: true
+
+# Mimir 6.x always writes through Kafka (ingest storage).
+kafka:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+
+minio:
+  enabled: true
+
+# Recording rules for the ruler, mounted above. The rules are read from
+# deployments/recording-rules.yaml, which docker compose also uses, with
+#   --set-file recordingRules=deployments/recording-rules.yaml
+extraObjects:
+  - |
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: mosaic-mimir-rules
+    data:
+      recording-rules.yaml: |
+        {{- required "Set --set-file recordingRules=deployments/recording-rules.yaml" .Values.recordingRules | nindent 4 }}

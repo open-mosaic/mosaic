@@ -6,6 +6,7 @@ NCCL Profiler OTEL test fixtures.
 This conftest provides fixtures and constants specific to NCCL profiler OTEL testing.
 """
 
+import logging
 import math
 import os
 import time
@@ -15,12 +16,17 @@ import pytest
 import requests
 from production_test_framework.docker import remove_containers_by_label
 from production_test_framework.vllm import VllmClient, VllmConfig
-from production_test_framework.workload.inferencex_workload import InferencexWorkload
+from production_test_framework.workload.inferencex_workload import (
+    InferencexMode,
+    InferencexWorkload,
+)
 from production_test_framework.workload.nccl_workload import NcclWorkload
 from production_test_framework.workload.prompt_workload import PromptWorkload
 
 from profiler_otel import profiles
 from profiler_otel.environment import environment_rows
+
+_log = logging.getLogger(__name__)
 
 # =============================================================================
 # Constants
@@ -134,9 +140,7 @@ NCCL_PROFILER_METRICS_EXPECTED_NCCL_WORKLOAD = [
 NCCL_PROFILER_METRICS_EXPECTED_AGGREGATED_MOE = list(
     NCCL_PROFILER_METRICS_EXPECTED_INFERENCEX_WORKLOAD
 )
-NCCL_PROFILER_METRICS_EXPECTED_DISAGG_MOE = list(
-    NCCL_PROFILER_METRICS_EXPECTED_INFERENCEX_WORKLOAD
-)
+NCCL_PROFILER_METRICS_EXPECTED_DISAGG_MOE = list(NCCL_PROFILER_METRICS_EXPECTED_INFERENCEX_WORKLOAD)
 
 #: Keyed by a profile's ``expected_metrics`` field.
 METRIC_SETS_BY_NAME = {
@@ -146,9 +150,7 @@ METRIC_SETS_BY_NAME = {
 }
 
 
-def expected_nccl_profiler_metrics(
-    workload, profile: profiles.Profile | None = None
-) -> list[str]:
+def expected_nccl_profiler_metrics(workload, profile: profiles.Profile | None = None) -> list[str]:
     """
     Return the NCCL profiler metric names we assert on for this workload.
 
@@ -208,7 +210,7 @@ def metric_total(prometheus_url: str, metric_name: str) -> float | None:
         return None
     try:
         value = float(series[0]["value"][1])
-    except (KeyError, IndexError, ValueError):
+    except KeyError, IndexError, ValueError:
         return None
     # Prometheus legitimately returns NaN for some series. float() accepts it, and every
     # comparison against NaN is False, so a NaN total would silently read as "did not
@@ -237,7 +239,7 @@ def metric_totals_by(
             continue
         try:
             value = float(item["value"][1])
-        except (KeyError, IndexError, ValueError):
+        except KeyError, IndexError, ValueError:
             continue
         # See metric_total: a NaN would read as a flat host rather than an absent one.
         if math.isfinite(value):
@@ -261,7 +263,7 @@ def metric_totals_by_gpu(prometheus_url: str, metric_name: str) -> dict[tuple[st
             continue
         try:
             value = float(item["value"][1])
-        except (KeyError, IndexError, ValueError):
+        except KeyError, IndexError, ValueError:
             continue
         if math.isfinite(value):
             totals[(host, gpu)] = value
@@ -340,7 +342,7 @@ def sweep_orphaned_workload_containers():
 
     removed = remove_containers_by_label()
     if removed:
-        print(f"\n  Removed {len(removed)} orphaned workload container(s): {removed}")
+        _log.info(f"Removed {len(removed)} orphaned workload container(s): {removed}")
 
 
 @pytest.fixture(scope="session")
@@ -366,6 +368,14 @@ def workload_profile(request) -> profiles.Profile:
         pytest.fail(error, pytrace=False)
 
     return profile
+
+
+@pytest.fixture(scope="session")
+def inferencex_mode(request) -> InferencexMode:
+    """
+    The load shape for the InferenceX workload, from ``--inferencex-mode``.
+    """
+    return InferencexMode(request.config.getoption("--inferencex-mode"))
 
 
 @pytest.fixture(scope="session")
@@ -396,7 +406,9 @@ def grafana_url(workload_profile: profiles.Profile) -> str:
 
 
 @pytest.fixture(scope="session", autouse=True)
-def report_environment(request, workload_profile, prometheus_url, grafana_url) -> None:
+def report_environment(
+    request, workload_profile, inferencex_mode, prometheus_url, grafana_url
+) -> None:
     """
     Record the report's environment table, including the addresses this run used.
 
@@ -406,7 +418,9 @@ def report_environment(request, workload_profile, prometheus_url, grafana_url) -
     the selected tests happen to request.
     """
     request.config.mosaic_reporter.set_environment(
-        environment_rows(workload_profile, prometheus_url, grafana_url)
+        environment_rows(
+            request.config, workload_profile, inferencex_mode, prometheus_url, grafana_url
+        )
     )
 
 
@@ -500,14 +514,14 @@ def profiler_pipeline_warm(
     Re-running the same workload against an already-warm stack passed, which is what identified
     this.
     """
-    print("\n  Warming up the server and the telemetry pipeline before measuring...")
+    _log.info("Warming up the server and the telemetry pipeline before measuring...")
     started = time.monotonic()
     result = vllm_client.complete(WARMUP_PROMPT)
     if not result.success:
         pytest.fail(
             f"warm-up inference failed, so nothing measured after it can be trusted: {result.error}"
         )
-    print(f"    Warm-up inference took {time.monotonic() - started:.1f}s")
+    _log.info(f"Warm-up inference took {time.monotonic() - started:.1f}s")
 
     # Waiting for the inference to return is not enough: export is chunky, and a whole
     # workload's worth of bytes can land in a single scrape well after the request finished.
@@ -516,13 +530,13 @@ def profiler_pipeline_warm(
     while True:
         total = metric_total(prometheus_url, WARMUP_PROBE_METRIC)
         if total:
-            print(f"    Telemetry pipeline live: {WARMUP_PROBE_METRIC}={total:.6g}")
+            _log.info(f"Telemetry pipeline live: {WARMUP_PROBE_METRIC}={total:.6g}")
             return
         if time.monotonic() >= deadline:
             # Not fatal. The tests assert on an increase and will fail on their own terms with
             # better diagnostics than this fixture could produce.
-            print(
-                f"    WARNING: {WARMUP_PROBE_METRIC} still absent or zero "
+            _log.warning(
+                f"{WARMUP_PROBE_METRIC} still absent or zero "
                 f"{workload_profile.timeouts.metrics_available}s after the warm-up inference"
             )
             return
@@ -545,16 +559,20 @@ def prompt_workload(vllm_config: VllmConfig, profiler_pipeline_warm):
 
 
 @pytest.fixture(scope="session")
-def inferencex_workload(workload_profile: profiles.Profile, profiler_pipeline_warm):
+def inferencex_workload(
+    workload_profile: profiles.Profile,
+    inferencex_mode: InferencexMode,
+    profiler_pipeline_warm,
+):
     """
-    Provide an InferenceX workload configured by the profile.
+    Provide an InferenceX workload configured by the profile and ``--inferencex-mode``.
 
-    ``benchmark_options`` is handed to the workload verbatim: it converts keys to
+    The profile's options for the mode are handed to the workload verbatim: it converts keys to
     benchmark_serving.py flags generically, so a profile can set any flag that script accepts
     without a change here. The endpoint is layered underneath, where ``None`` means "omit the
     flag" -- which is how a base_url profile drops the default host/port.
     """
-    options = dict(workload_profile.benchmark_options)
+    options = workload_profile.inferencex_options(inferencex_mode)
     host_port = _endpoint_host_port(workload_profile)
     if host_port is None:
         options.setdefault("base_url", workload_profile.endpoint.base_url)

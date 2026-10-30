@@ -257,7 +257,17 @@ format). A single `pytest` run writes one only when asked; append any of these:
 --report-file=PATH
 --report-format=[html|md]      # default html; a .md path infers md
 --report-html=PATH             # alias for --report-file
+--report-title=TEXT            # header title; default "Test Report"
+--report-logo=PATH             # header image (svg/png/jpeg/gif/webp), embedded in the
+                               # file itself; no logo when left off
+--report-max-failures=N        # how many tracebacks the Failures section shows (default 5);
+                               # every failure is listed in its table regardless
 ```
+
+The report itself lives in the framework
+(`production_test_framework.reporting`), so every suite that uses it publishes the
+same document. Results are grouped into sections by marker; set `report_category_markers` in
+`[tool.pytest.ini_options]` to change which markers name a section and in what order.
 
 For example, from `tests/suites`:
 

@@ -1,0 +1,215 @@
+# SPDX-FileCopyrightText: 2025 Delos Data Inc
+# SPDX-License-Identifier: Apache-2.0
+#
+# Values for the Grafana Alloy chart (grafana/alloy), the telemetry collector of
+# the LGTMA stack.
+#
+# - Receives OTLP from the workloads and sends metrics to Mimir and the
+#   pipeline analyzer, logs to Loki, and traces to Tempo.
+# - Scrapes the pipeline analyzer and the pods in the mosaic namespace that have
+#   the mosaic.io/scrape: "true" annotation, and sends the metrics to Mimir.
+#
+#   helm repo add grafana https://grafana.github.io/helm-charts
+#   helm install mosaic-alloy grafana/alloy --version 1.13.1 \
+#     -n mosaic -f deployments/k8s/alloy-values.yaml
+#
+# OTLP endpoints (workloads): http://mosaic-alloy:4318 (HTTP), mosaic-alloy:4317 (gRPC)
+
+fullnameOverride: mosaic-alloy
+
+# A single instance, so every metric is received and scraped once.
+controller:
+  type: deployment
+  replicas: 1
+
+alloy:
+  extraPorts:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+      protocol: TCP
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+      protocol: TCP
+
+  configMap:
+    content: |
+      logging {
+        level = "info"
+        format = "logfmt"
+      }
+
+      // OTLP receiving (gRPC on 4317, HTTP on 4318)
+      otelcol.receiver.otlp "default" {
+        grpc {
+          endpoint = "0.0.0.0:4317"
+        }
+
+        http {
+          endpoint = "0.0.0.0:4318"
+        }
+
+        output {
+          metrics = [otelcol.processor.batch.default.input]
+          logs    = [otelcol.processor.batch.default.input]
+          traces  = [otelcol.processor.batch.default.input]
+        }
+      }
+
+      // Same settings as ../otel-collector-config.yaml.
+      otelcol.processor.batch "default" {
+        timeout             = "1s"
+        send_batch_size     = 100
+        send_batch_max_size = 500
+
+        output {
+          metrics = [
+            otelcol.exporter.prometheus.mimir.input,
+            otelcol.exporter.otlp.pipeline_analyzer.input,
+          ]
+          logs   = [otelcol.exporter.otlphttp.loki.input]
+          traces = [otelcol.exporter.otlp.tempo.input]
+        }
+      }
+
+      // Metrics
+
+      otelcol.exporter.prometheus "mimir" {
+        // Keep resource attributes (e.g. hostname, gpu_uuid) as labels.
+        resource_to_telemetry_conversion = true
+        forward_to                       = [prometheus.remote_write.mimir.receiver]
+      }
+
+      // The pipeline analyzer reads the metrics in the Prometheus text format
+      // from its collector sidecar.
+      otelcol.exporter.otlp "pipeline_analyzer" {
+        client {
+          endpoint = "mosaic-pipeline-analyzer:4317"
+
+          tls {
+            insecure = true
+          }
+        }
+      }
+
+      prometheus.remote_write "mimir" {
+        endpoint {
+          url = "http://mosaic-mimir-gateway/api/v1/push"
+        }
+      }
+
+      prometheus.scrape "pipeline_analyzer" {
+        job_name        = "pipeline-analyzer"
+        targets         = [{"__address__" = "mosaic-pipeline-analyzer:5000"}]
+        metrics_path    = "/metrics/pipelines"
+        scrape_interval = "10s"
+        scrape_timeout  = "5s"
+        forward_to      = [prometheus.remote_write.mimir.receiver]
+      }
+
+      prometheus.scrape "rank_mapping" {
+        job_name        = "rank-mapping"
+        targets         = [{"__address__" = "mosaic-pipeline-analyzer:5000"}]
+        metrics_path    = "/metrics/rank_mapping"
+        scrape_interval = "10s"
+        scrape_timeout  = "5s"
+        forward_to      = [prometheus.remote_write.mimir.receiver]
+      }
+
+      // Pods annotated with mosaic.io/scrape: "true". The job and host labels
+      // match the file service discovery naming that the dashboards expect
+      // (job=<job>-<node>, host=<node>).
+      discovery.kubernetes "pods" {
+        role = "pod"
+
+        namespaces {
+          names = ["mosaic"]
+        }
+      }
+
+      discovery.relabel "pods" {
+        targets = discovery.kubernetes.pods.targets
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_annotation_mosaic_io_scrape"]
+          action        = "keep"
+          regex         = "true"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_phase"]
+          action        = "drop"
+          regex         = "Pending|Succeeded|Failed"
+        }
+
+        rule {
+          source_labels = ["__address__", "__meta_kubernetes_pod_annotation_mosaic_io_port"]
+          action        = "replace"
+          regex         = `([^:]+)(?::\d+)?;(\d+)`
+          replacement   = "$1:$2"
+          target_label  = "__address__"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_annotation_mosaic_io_path"]
+          action        = "replace"
+          regex         = "(.+)"
+          target_label  = "__metrics_path__"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_annotation_mosaic_io_scrape_interval"]
+          action        = "replace"
+          regex         = "(.+)"
+          target_label  = "__scrape_interval__"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_annotation_mosaic_io_scrape_timeout"]
+          action        = "replace"
+          regex         = "(.+)"
+          target_label  = "__scrape_timeout__"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_node_name"]
+          action        = "replace"
+          target_label  = "host"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_annotation_mosaic_io_job", "__meta_kubernetes_pod_node_name"]
+          action        = "replace"
+          separator     = "-"
+          target_label  = "job"
+        }
+      }
+
+      prometheus.scrape "pods" {
+        targets         = discovery.relabel.pods.output
+        // Defaults for pods without the scrape-interval and scrape-timeout annotations.
+        scrape_interval = "1s"
+        scrape_timeout  = "1s"
+        forward_to      = [prometheus.remote_write.mimir.receiver]
+      }
+
+      // Logs
+
+      otelcol.exporter.otlphttp "loki" {
+        client {
+          endpoint = "http://mosaic-loki:3100/otlp"
+        }
+      }
+
+      // Traces
+
+      otelcol.exporter.otlp "tempo" {
+        client {
+          endpoint = "mosaic-tempo-distributor:4317"
+
+          tls {
+            insecure = true
+          }
+        }
+      }

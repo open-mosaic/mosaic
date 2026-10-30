@@ -1,0 +1,53 @@
+# SPDX-FileCopyrightText: 2025 Delos Data Inc
+# SPDX-License-Identifier: Apache-2.0
+#
+# Values for the Grafana Tempo chart (grafana-community/tempo-distributed), the
+# traces backend of the LGTMA stack. The 2.x chart (Tempo 2.10) is used for
+# this example because the 3.x chart requires an external Kafka.
+# Traces are stored in the MinIO that the chart bundles.
+#
+#   helm repo add grafana-community https://grafana-community.github.io/helm-charts
+#   helm install mosaic-tempo grafana-community/tempo-distributed --version 2.26.2 \
+#     -n mosaic -f deployments/k8s/tempo-values.yaml
+#
+# OTLP endpoint (Alloy):  mosaic-tempo-distributor:4317
+# Query endpoint (Grafana): http://mosaic-tempo-query-frontend:3200
+
+fullnameOverride: mosaic-tempo
+
+traces:
+  otlp:
+    grpc:
+      enabled: true
+    http:
+      enabled: true
+
+ingester:
+  replicas: 1
+  config:
+    replication_factor: 1
+
+storage:
+  trace:
+    backend: s3
+    s3:
+      bucket: tempo-traces
+      endpoint: mosaic-tempo-minio:9000
+      # Default credentials of the bundled MinIO, see minio below.
+      access_key: grafana-tempo
+      secret_key: supersecret
+      insecure: true
+
+minio:
+  enabled: true
+  # The MinIO bundled with Mimir already creates the default "minio-sa".
+  serviceAccount:
+    name: mosaic-tempo-minio
+  # The chart's default quay.io/minio/mc image is no longer publicly available.
+  # Use the MinIO fork that Mimir bundles, which includes the mc client.
+  mcImage:
+    repository: pgsty/silo
+    tag: RELEASE.2026-09-03T13-18-01Z
+  # Tempo uses the root credentials. Skips the job that creates the console
+  # user, which uses an mc command that newer clients no longer support.
+  users: []

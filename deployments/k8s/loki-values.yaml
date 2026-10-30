@@ -1,0 +1,66 @@
+# SPDX-FileCopyrightText: 2025 Delos Data Inc
+# SPDX-License-Identifier: Apache-2.0
+#
+# Values for the Grafana Loki chart (grafana-community/loki), the logs backend
+# of the LGTMA stack. Runs a single Loki binary with filesystem storage, with
+# the same schema and retention as ../loki-config.yaml.
+#
+#   helm repo add grafana-community https://grafana-community.github.io/helm-charts
+#   helm install mosaic-loki grafana-community/loki --version 18.15.1 \
+#     -n mosaic -f deployments/k8s/loki-values.yaml
+#
+# OTLP endpoint (Alloy): http://mosaic-loki:3100/otlp
+
+fullnameOverride: mosaic-loki
+
+deploymentMode: Monolithic
+
+loki:
+  auth_enabled: false
+  commonConfig:
+    replication_factor: 1
+  storage:
+    type: filesystem
+  schemaConfig:
+    configs:
+      - from: "2020-10-24"
+        store: tsdb
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: index_
+          period: 24h
+  limits_config:
+    # Log retention: delete logs older than retention_period.
+    retention_period: 24h
+    # Keeps OTLP resource and log attributes that are not stored as labels.
+    allow_structured_metadata: true
+  compactor:
+    retention_enabled: true
+    retention_delete_delay: 2h
+    delete_request_store: filesystem
+
+singleBinary:
+  replicas: 1
+
+# Only used by the scalable deployment modes.
+read:
+  replicas: 0
+write:
+  replicas: 0
+backend:
+  replicas: 0
+
+chunksCache:
+  enabled: false
+resultsCache:
+  enabled: false
+
+# Alloy and Grafana talk to the Loki service directly.
+gateway:
+  enabled: false
+
+lokiCanary:
+  enabled: false
+test:
+  enabled: false

@@ -56,7 +56,8 @@ Provides fixtures and constants for the profiler OTEL tests:
 | `vllm_client` | Client for vLLM inference API |
 | `vllm_ready` | Waits for vLLM to be healthy |
 | `prompt_workload` | Single completion request against the profile's endpoint |
-| `inferencex_workload` | Benchmark run configured from the profile's `benchmark_options` |
+| `inferencex_mode` | `--inferencex-mode`: `agentic` (default) or `fixed` |
+| `inferencex_workload` | Benchmark run configured from the profile's `benchmark_options`, with `agentic_options` layered over them in agentic mode |
 | `nccl_workload` | `nccl-tests` binary sized to the profile's GPU count |
 | `workload` | Dispatches to one of the above by indirect parametrization |
 

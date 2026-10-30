@@ -13,6 +13,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from production_test_framework.workload.inferencex_workload import (
+    DEFAULT_AGENTIC_OPTIONS,
+    InferencexMode,
+)
 from pydantic import ValidationError
 
 from profiler_otel import profiles
@@ -58,6 +62,7 @@ def _disaggregated_profile_file() -> dict[str, Any]:
 
 def _parse(raw: dict[str, Any]) -> profiles.Profile:
     return profiles.parse_profile("unit-test", raw, FAKE_PROFILE_PATH)
+
 
 # Synthetic profiles exercising shapes this repository ships support for but no longer ships
 # a profile for: externally deployed clusters, a frontend base_url, multi-host coverage and
@@ -200,6 +205,7 @@ class TestProfiles:
                 f"profile {name!r} ({path}) names metric set {key!r}, which conftest does "
                 f"not define; known: {sorted(METRIC_SETS_BY_NAME)}"
             )
+
 
 @pytest.mark.profiler_otel
 class TestProfilesCli:
@@ -351,6 +357,74 @@ class TestProfileValidation:
         assert profile.benchmark_options == {"num_prompts": 4, "ignore_eos": True}, (
             "benchmark_options should pass through untouched"
         )
+
+    def test_fixed_mode_uses_benchmark_options_as_written(self) -> None:
+        """
+        :title: Profiles - fixed mode runs benchmark_options unchanged
+        :suite: profiler_otel
+        :description:
+            The fixed InferenceX mode must hand the workload exactly what the profile's
+            benchmark_options say, even when the profile also declares agentic_options.
+        """
+        raw = _profile_file()
+        raw["agentic_options"] = {"random_input_len": 8192}
+        profile = _parse(raw)
+
+        assert profile.inferencex_options(InferencexMode.FIXED) == {
+            "num_prompts": 4,
+            "ignore_eos": True,
+        }, "fixed mode should not apply agentic_options"
+
+    def test_agentic_mode_layers_the_profiles_agentic_options(self) -> None:
+        """
+        :title: Profiles - agentic mode layers agentic_options over benchmark_options
+        :suite: profiler_otel
+        :description:
+            A key in agentic_options replaces the same key in benchmark_options, and a key
+            only benchmark_options sets is kept, so flags such as ignore_eos apply to both
+            modes.
+        """
+        raw = _profile_file()
+        raw["agentic_options"] = {"num_prompts": 8, "random_input_len": 8192}
+        profile = _parse(raw)
+
+        assert profile.inferencex_options(InferencexMode.AGENTIC) == {
+            "num_prompts": 8,
+            "ignore_eos": True,
+            "random_input_len": 8192,
+        }, "agentic_options should override and extend benchmark_options"
+
+    def test_agentic_mode_without_agentic_options_uses_the_defaults(self) -> None:
+        """
+        :title: Profiles - agentic mode falls back to the default agentic options
+        :suite: profiler_otel
+        :description:
+            A profile that declares no agentic_options still runs an agentic load in
+            agentic mode, shaped by DEFAULT_AGENTIC_OPTIONS.
+        """
+        profile = _parse(_profile_file())
+
+        assert profile.agentic_options is None, "agentic_options should be optional"
+        assert profile.inferencex_options(InferencexMode.AGENTIC) == {
+            "num_prompts": 4,
+            "ignore_eos": True,
+            **DEFAULT_AGENTIC_OPTIONS,
+        }, "agentic mode should layer DEFAULT_AGENTIC_OPTIONS over benchmark_options"
+
+    def test_inferencex_options_returns_a_copy(self) -> None:
+        """
+        :title: Profiles - the options for a mode can be extended without changing the profile
+        :suite: profiler_otel
+        :description:
+            The workload fixture adds the endpoint and model to the options it is given, and the
+            profile is shared across the session, so each call must return a fresh dict.
+        """
+        profile = _parse(_profile_file())
+
+        profile.inferencex_options(InferencexMode.AGENTIC)["model"] = "other/model"
+
+        assert "model" not in profile.benchmark_options, "benchmark_options was modified"
+        assert "model" not in DEFAULT_AGENTIC_OPTIONS, "DEFAULT_AGENTIC_OPTIONS was modified"
 
     def test_a_disaggregated_profile_round_trips(self) -> None:
         """

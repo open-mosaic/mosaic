@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import logging
 import os
 import re
 import shutil
@@ -47,6 +48,8 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
+
+_log = logging.getLogger(__name__)
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
@@ -577,6 +580,7 @@ def write_results_csv(path: Path, header: list[str], records: list[dict[str, str
 
 
 def main() -> int:
+    logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stdout)
     parser = argparse.ArgumentParser(
         description="Run the profiler OTEL suite once per row of a sweep table.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -650,7 +654,7 @@ def main() -> int:
     if args.label:
         cleaned = safe_label(args.label)
         if cleaned != args.label:
-            print(f"  note: label {args.label!r} is not filename-safe; using {cleaned!r}")
+            _log.warning(f"  note: label {args.label!r} is not filename-safe; using {cleaned!r}")
         args.label = cleaned
     else:
         model = args.model or read_profile_value(profile_path, "model") or ""
@@ -660,10 +664,10 @@ def main() -> int:
 
     if args.list:
         widths = [max(len(key), 12) for key in header]
-        print("#    " + "".join(key.ljust(w + 2) for key, w in zip(header, widths)) + "report")
+        _log.info("#    " + "".join(key.ljust(w + 2) for key, w in zip(header, widths)) + "report")
         for row in rows:
             values = "".join(row.values[key].ljust(w + 2) for key, w in zip(header, widths))
-            print(f"{row.index:<5}{values}{row.report_stem(args.label)}.{args.report_ext}")
+            _log.info(f"{row.index:<5}{values}{row.report_stem(args.label)}.{args.report_ext}")
         return 0
 
     # Charting an existing sweep: --graph with an --out-dir that already has a CSV, and no
@@ -672,9 +676,9 @@ def main() -> int:
     csv_path = out_dir / "sweep_results.csv"
     if args.graph and args.out_dir and csv_path.is_file() and args.only is None and args.start == 1:
         written = make_graphs(load_results_csv(csv_path), out_dir)
-        print(f"Wrote {len(written)} chart(s) to {out_dir}")
+        _log.info(f"Wrote {len(written)} chart(s) to {out_dir}")
         for path in written:
-            print(f"  {path.name}")
+            _log.info(f"  {path.name}")
         return 0
 
     selected = [r for r in rows if (r.index == args.only if args.only else r.index >= args.start)]
@@ -686,20 +690,20 @@ def main() -> int:
     run_env = resolve_run_env(profile_path, args)
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    print(f"Sweep of {len(selected)} of {len(rows)} row(s) from {args.config}")
-    print(f"  profile : {profile_path}")
-    print(f"  reports : {out_dir}")
-    print(f"  model   : {args.model or '<unchanged in profile>'}")
-    print(f"  columns : {' '.join(header)}")
+    _log.info(f"Sweep of {len(selected)} of {len(rows)} row(s) from {args.config}")
+    _log.info(f"  profile : {profile_path}")
+    _log.info(f"  reports : {out_dir}")
+    _log.info(f"  model   : {args.model or '<unchanged in profile>'}")
+    _log.info(f"  columns : {' '.join(header)}")
     grafana = f"{run_env['GRAFANA_HOST']}:{run_env['GRAFANA_PORT']}"
-    print(f"  metrics : Prometheus {run_env['PROMETHEUS_HOST']}, Grafana {grafana}")
+    _log.info(f"  metrics : Prometheus {run_env['PROMETHEUS_HOST']}, Grafana {grafana}")
     if "GPU_INFO_SSH_USER" in run_env:
-        print(f"  gpu ssh : {run_env['GPU_INFO_SSH_USER']}")
+        _log.info(f"  gpu ssh : {run_env['GPU_INFO_SSH_USER']}")
     else:
-        print("  gpu ssh : none -- reports will omit the head node's driver and CUDA versions")
+        _log.info("  gpu ssh : none -- reports will omit the head node's driver and CUDA versions")
     if args.dry_run:
-        print("  DRY RUN -- no profile edits, no test runs")
-    print()
+        _log.info("  DRY RUN -- no profile edits, no test runs")
+    _log.info("")
 
     # Exported so both pytest and the report's head-node GPU probe see them.
     env = dict(os.environ)
@@ -722,11 +726,11 @@ def main() -> int:
             report = out_dir / f"{stem}.{args.report_ext}"
             log = out_dir / f"{stem}.log"
             described = " ".join(f"{k}={v}" for k, v in row.values.items())
-            print(f"[{row.index}/{len(rows)}] {described}")
-            print(f"         report: {report}")
+            _log.info(f"[{row.index}/{len(rows)}] {described}")
+            _log.info(f"         report: {report}")
 
             if args.dry_run:
-                print("         (dry run) would rewrite those keys and run pytest\n")
+                _log.info("         (dry run) would rewrite those keys and run pytest\n")
                 continue
 
             for key, value in row.values.items():
@@ -757,7 +761,7 @@ def main() -> int:
                     text=True,
                 )
                 handle.write(process.stdout)
-            print(process.stdout, end="")
+            _log.info(process.stdout.rstrip("\n"))
 
             elapsed = time.time() - started
             record = dict(row.values)
@@ -771,53 +775,53 @@ def main() -> int:
                 consecutive += 1
                 failures.append(row)
                 exit_code = process.returncode
-                print(
+                _log.error(
                     f"         FAILED (pytest exit {process.returncode}) after {elapsed / 60:.0f}m {elapsed % 60:.0f}s"
                 )
                 if not args.keep_going:
-                    print()
+                    _log.info("")
                     failed_row = row
                     break
                 # Two in a row means the deployment is down rather than one row being too
                 # heavy for it, and every remaining row would fail the same way -- on a
                 # 12-hour sweep that is hours of wasted cluster time.
                 if consecutive >= CONSECUTIVE_FAILURE_LIMIT:
-                    print(f"         {consecutive} failures in a row -- stopping\n")
+                    _log.error(f"         {consecutive} failures in a row -- stopping\n")
                     failed_row = row
                     break
-                print("         continuing (--keep-going)\n")
+                _log.info("         continuing (--keep-going)\n")
                 continue
 
             consecutive = 0
-            print(f"         PASSED in {elapsed / 60:.0f}m {elapsed % 60:.0f}s\n")
+            _log.info(f"         PASSED in {elapsed / 60:.0f}m {elapsed % 60:.0f}s\n")
     finally:
         shutil.copy(backup, profile_path)
         backup.unlink(missing_ok=True)
-        print(f"  Restored {args.profile}.yaml to its original contents.")
+        _log.info(f"  Restored {args.profile}.yaml to its original contents.")
 
     if records:
         write_results_csv(csv_path, header, records)
-        print(f"  Results: {csv_path}")
+        _log.info(f"  Results: {csv_path}")
 
     if failures:
-        print(f"\n{len(failures)} row(s) failed:")
+        _log.error(f"\n{len(failures)} row(s) failed:")
         for row in failures:
-            print(f"  row {row.index}: {out_dir / (row.report_stem(args.label) + '.log')}")
+            _log.error(f"  row {row.index}: {out_dir / (row.report_stem(args.label) + '.log')}")
 
     if failed_row is not None:
-        print(f"\nStopped at row {failed_row.index}/{len(rows)}.")
-        print(f"  resume with : {sys.argv[0]} --start {failed_row.index} --out-dir {out_dir}")
+        _log.error(f"\nStopped at row {failed_row.index}/{len(rows)}.")
+        _log.info(f"  resume with : {sys.argv[0]} --start {failed_row.index} --out-dir {out_dir}")
         return exit_code
 
     if not args.dry_run:
         total = time.time() - sweep_started
         passed = sum(1 for record in records if record.get("status") == "passed")
-        print(f"Completed {passed} of {len(records)} row(s) in {total // 3600:.0f}h {(total % 3600) // 60:.0f}m.")
+        _log.info(f"Completed {passed} of {len(records)} row(s) in {total // 3600:.0f}h {(total % 3600) // 60:.0f}m.")
         if args.graph and records:
             written = make_graphs(load_results_csv(csv_path), out_dir)
-            print(f"Wrote {len(written)} chart(s):")
+            _log.info(f"Wrote {len(written)} chart(s):")
             for path in written:
-                print(f"  {path.name}")
+                _log.info(f"  {path.name}")
     return exit_code
 
 
