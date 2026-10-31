@@ -92,7 +92,24 @@ jobs:
           webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
           webhook-type: incoming-webhook
           payload: |
-            text: "*Integration tests failed*"
+            text: |-
+              *Integration tests failed*
+              <@${{ vars.CLAUDE_TAG_SLACK_ID }}> Analyze this integration test failure. Reply in this thread.
+              Run link: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+              1. Open the run link. Find the first job that failed.
+              2. Read the log of that job. Find the first error.
+              3. Compare the commits since the last run that passed.
+              4. Write the analysis in ASD-STE100 Simplified Technical English.
+              5. Use this format:
+                 Failed job: [name]
+                 First error: [one line from the log]
+                 Probable root cause: [max 2 sentences]
+                 Confidence: High, Medium, or Low
+                 Probable commit: [SHA and author, or "none found"]
+                 Recommended action: [max 2 sentences]
+              6. Use a maximum of 20 words in each sentence.
+              7. If the cause is in the test infrastructure, not the code, say so.
+              8. If the data is not sufficient, write "Root cause not found" and list the missing data.
             attachments:
               - color: danger
                 blocks:
