@@ -20,6 +20,7 @@ from production_test_framework.workload.workload import WorkloadStatus
 
 from profiler_otel.conftest import (
     NCCL_PROFILER_METRICS_EXPECTED_PROMPT_WORKLOAD,
+    ShapedInferencexWorkload,
     expected_nccl_profiler_metrics,
     metric_increased,
     metric_total,
@@ -153,11 +154,11 @@ class TestNCCLProfilerTelemetry:
         "workload",
         [
             "prompt_workload",
-            "inferencex_workload",
+            "inferencex_fixed_workload",
+            "inferencex_agentic_workload",
             "nccl_workload",
         ],
         indirect=True,
-        ids=["prompt_workload", "inferencex_workload", "nccl_workload"],
     )
     def test_nccl_metrics_exported_after_inference(
         self,
@@ -172,10 +173,14 @@ class TestNCCLProfilerTelemetry:
         :description: Verify NCCL profiler metrics are exported to Prometheus.
             Waits for the metric totals to settle, snapshots them.
             Runs the workload, then requires each expected metric for the active profile
-            to increase above that baseline.
+            to increase above that baseline. InferenceX runs twice: a fixed shape asserting
+            the full set, and an agentic shape that omits the collective transfer size/time
+            metrics, which that shape does not reliably produce.
         """
         timeouts = workload_profile.timeouts
         nccl_profiler_metrics = expected_nccl_profiler_metrics(workload, workload_profile)
+        if isinstance(workload, ShapedInferencexWorkload):
+            reporter.note(f"InferenceX workload shape: {workload.mode}")
 
         baseline = _settle_and_snapshot(
             reporter, prometheus_url, nccl_profiler_metrics, timeouts.quiesce
@@ -255,7 +260,7 @@ class TestNCCLProfilerTelemetry:
 
     def test_every_node_reports_nccl_metrics(
         self,
-        inferencex_workload,
+        inferencex_fixed_workload,
         workload_profile,
         prometheus_url: str,
         reporter,
@@ -270,7 +275,7 @@ class TestNCCLProfilerTelemetry:
         """
         coverage = workload_profile.coverage
         timeouts = workload_profile.timeouts
-        metrics = expected_nccl_profiler_metrics(inferencex_workload, workload_profile)
+        metrics = expected_nccl_profiler_metrics(inferencex_fixed_workload, workload_profile)
 
         probe = "nccl_profiler_collective_bytes_total"
         if probe not in metrics:
@@ -280,7 +285,7 @@ class TestNCCLProfilerTelemetry:
         baseline_by_gpu = metric_totals_by_gpu(prometheus_url, probe)
         baseline_by_comm = metric_totals_by(prometheus_url, probe, label="communicator")
 
-        workload_result = _run_workload(reporter, inferencex_workload, timeouts.workload)
+        workload_result = _run_workload(reporter, inferencex_fixed_workload, timeouts.workload)
 
         def active_participants():
             """GPUs, hosts and communicators whose totals rose during this workload."""

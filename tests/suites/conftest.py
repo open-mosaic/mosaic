@@ -4,10 +4,6 @@
 import os
 
 import pytest
-from production_test_framework.workload.inferencex_workload import (
-    DEFAULT_INFERENCEX_MODE,
-    InferencexMode,
-)
 
 pytest_plugins = ["production_test_framework.reporting.report_plugin"]
 
@@ -37,17 +33,6 @@ def pytest_addoption(parser):
             "Directory of profile YAML files; repeatable. Defaults to the in-repo "
             "profiler_otel/profiles/. Use this option so that a "
             "private repo can supply its own profiles without forking this suite."
-        ),
-    )
-    group.addoption(
-        "--inferencex-mode",
-        action="store",
-        default=DEFAULT_INFERENCEX_MODE.value,
-        choices=[mode.value for mode in InferencexMode],
-        help=(
-            "Load shape for the InferenceX workload: 'fixed' runs the profile's "
-            "benchmark_options as written; 'agentic' layers its agentic_options over them "
-            f"(default: {DEFAULT_INFERENCEX_MODE.value})."
         ),
     )
 
