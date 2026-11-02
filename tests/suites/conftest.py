@@ -4,10 +4,7 @@
 import os
 
 import pytest
-from production_test_framework.workload.inferencex_workload import (
-    DEFAULT_INFERENCEX_MODE,
-    InferencexMode,
-)
+from production_test_framework.workload.inferencex_workload import InferencexMode
 
 pytest_plugins = ["production_test_framework.reporting.report_plugin"]
 
@@ -42,13 +39,9 @@ def pytest_addoption(parser):
     group.addoption(
         "--inferencex-mode",
         action="store",
-        default=DEFAULT_INFERENCEX_MODE.value,
+        default=None,
         choices=[mode.value for mode in InferencexMode],
-        help=(
-            "Load shape for the InferenceX workload: 'fixed' runs the profile's "
-            "benchmark_options as written; 'agentic' layers its agentic_options over them "
-            f"(default: {DEFAULT_INFERENCEX_MODE.value})."
-        ),
+        help="Run only the InferenceX case of this load shape (default: both).",
     )
 
 
