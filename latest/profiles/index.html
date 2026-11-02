@@ -1584,7 +1584,7 @@ left set in a shell cannot silently change a later run.</p>
 </tr>
 <tr>
 <td><code>agentic_options</code></td>
-<td>Optional. Layered over <code>benchmark_options</code> unless the run passes <code>--inferencex-mode fixed</code></td>
+<td>Optional. Layered over <code>benchmark_options</code> for the agentic InferenceX run</td>
 </tr>
 </tbody>
 </table>
@@ -1599,13 +1599,20 @@ single frontend sets <code>base_url</code> and clears the host and port:</p>
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">base_url</span><span class="p">:</span><span class="w"> </span><span class="s">"http://frontend:8000"</span>
 </span></code></pre></div>
 <h4 id="agentic-load">Agentic load<a class="headerlink" href="#agentic-load" title="Permanent link">#</a></h4>
-<p>By default the InferenceX workload runs in agentic mode, shaped like the traffic an agent produces:
+<p>The InferenceX workload runs in two shapes, as separate test cases. The fixed run uses
+<code>benchmark_options</code> as written. The agentic run is shaped like the traffic an agent produces:
 long prompts that share a prefix, as an agent re-sends its growing context each turn, and short
-answers, as a tool call is. The mode layers <code>agentic_options</code> over <code>benchmark_options</code>, so a key
-in both takes the agentic value and flags such as <code>ignore_eos</code> carry over unchanged. A profile
+answers, as a tool call is. It layers <code>agentic_options</code> over <code>benchmark_options</code>, so a key in
+both takes the agentic value and flags such as <code>ignore_eos</code> carry over unchanged. A profile
 without <code>agentic_options</code> gets <code>DEFAULT_AGENTIC_OPTIONS</code> from the production test framework's
-InferenceX workload. Pass <code>--inferencex-mode fixed</code> to run <code>benchmark_options</code> as written and
-ignore <code>agentic_options</code>.</p>
+InferenceX workload.</p>
+<p>The agentic run does not assert <code>nccl_profiler_collective_transfer_size_bytes_sum</code> or
+<code>nccl_profiler_collective_transfer_time_microseconds_sum</code>, which that shape does not produce
+reliably. The fixed run asserts both.</p>
+<p>By default both shapes run. Pass <code>--inferencex-mode fixed</code> or <code>--inferencex-mode agentic</code> to run
+only that shape's case; the other is deselected. <code>test_every_node_reports_nccl_metrics</code> runs the
+workload once more in the chosen shape, or the fixed shape when the flag is absent. A full run
+therefore executes the benchmark three times, and a run with the flag twice.</p>
 <div class="language-yaml highlight"><span class="filename">Sizing the agentic load for a larger machine</span><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">agentic_options</span><span class="p">:</span>
 </span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">num_prompts</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">128</span>
 </span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="nt">max_concurrency</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">16</span>
@@ -1614,7 +1621,8 @@ ignore <code>agentic_options</code>.</p>
 </span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">  </span><span class="nt">random_prefix_len</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1024</span>
 </span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">  </span><span class="nt">random_range_ratio</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.5</span>
 </span></code></pre></div>
-<p>The server's maximum context length must cover <code>random_input_len</code> plus <code>random_output_len</code>.</p>
+<p>The server's maximum context length must cover <code>random_prefix_len</code> plus <code>random_input_len</code>
+plus <code>random_output_len</code>: the prefix is added on top of the sampled input.</p>
 <h4 id="the-clusters-own-addresses">The cluster's own addresses<a class="headerlink" href="#the-clusters-own-addresses" title="Permanent link">#</a></h4>
 <p><code>endpoint</code> also carries where a run reads its results back from: the Prometheus holding the
 profiler's metrics, the Grafana the dashboards checks go to, and the SSH login the report uses
