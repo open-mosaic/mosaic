@@ -86,17 +86,22 @@ endpoint:
 
 ### Agentic load
 
-Every run drives the InferenceX workload in two shapes, as separate test cases. The fixed run
-uses `benchmark_options` as written, and `test_every_node_reports_nccl_metrics` runs it once
-more, so a full run executes the benchmark three times. The agentic run is shaped like the traffic an agent produces: long prompts that share a
-prefix, as an agent re-sends its growing context each turn, and short answers, as a tool call is.
-It layers `agentic_options` over `benchmark_options`, so a key in both takes the agentic value
-and flags such as `ignore_eos` carry over unchanged. A profile without `agentic_options` gets
-`DEFAULT_AGENTIC_OPTIONS` from the production test framework's InferenceX workload.
+The InferenceX workload runs in two shapes, as separate test cases. The fixed run uses
+`benchmark_options` as written. The agentic run is shaped like the traffic an agent produces:
+long prompts that share a prefix, as an agent re-sends its growing context each turn, and short
+answers, as a tool call is. It layers `agentic_options` over `benchmark_options`, so a key in
+both takes the agentic value and flags such as `ignore_eos` carry over unchanged. A profile
+without `agentic_options` gets `DEFAULT_AGENTIC_OPTIONS` from the production test framework's
+InferenceX workload.
 
 The agentic run does not assert `nccl_profiler_collective_transfer_size_bytes_sum` or
 `nccl_profiler_collective_transfer_time_microseconds_sum`, which that shape does not produce
 reliably. The fixed run asserts both.
+
+By default both shapes run. Pass `--inferencex-mode fixed` or `--inferencex-mode agentic` to run
+only that shape's case; the other is deselected. `test_every_node_reports_nccl_metrics` runs the
+workload once more in the chosen shape, or the fixed shape when the flag is absent. A full run
+therefore executes the benchmark three times, and a run with the flag twice.
 
 ```yaml title="Sizing the agentic load for a larger machine"
 agentic_options:

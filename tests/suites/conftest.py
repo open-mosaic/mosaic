@@ -4,6 +4,7 @@
 import os
 
 import pytest
+from production_test_framework.workload.inferencex_workload import InferencexMode
 
 pytest_plugins = ["production_test_framework.reporting.report_plugin"]
 
@@ -34,6 +35,13 @@ def pytest_addoption(parser):
             "profiler_otel/profiles/. Use this option so that a "
             "private repo can supply its own profiles without forking this suite."
         ),
+    )
+    group.addoption(
+        "--inferencex-mode",
+        action="store",
+        default=None,
+        choices=[mode.value for mode in InferencexMode],
+        help="Run only the InferenceX case of this load shape (default: both).",
     )
 
 

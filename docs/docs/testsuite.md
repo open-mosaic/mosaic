@@ -58,6 +58,7 @@ Provides fixtures and constants for the profiler OTEL tests:
 | `prompt_workload` | Single completion request against the profile's endpoint |
 | `inferencex_fixed_workload` | Benchmark run configured from the profile's `benchmark_options` |
 | `inferencex_agentic_workload` | The same, with the profile's `agentic_options` (or the framework's agentic defaults) layered on top |
+| `inferencex_workload` | The shape `--inferencex-mode` names, or the fixed shape by default; used by the coverage test |
 | `nccl_workload` | `nccl-tests` binary sized to the profile's GPU count |
 | `workload` | Dispatches to one of the above by indirect parametrization |
 

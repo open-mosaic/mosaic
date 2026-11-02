@@ -167,20 +167,62 @@ INFERENCEX_FIXTURES_BY_MODE = {
 }
 
 
-def selected_inferencex_modes(items) -> list[InferencexMode]:
+def inferencex_mode_option(config) -> InferencexMode | None:
+    """The shape ``--inferencex-mode`` narrows the run to, or None to run both."""
+    chosen = config.getoption("--inferencex-mode")
+    return None if chosen is None else InferencexMode(chosen)
+
+
+def inferencex_workload_mode(config) -> InferencexMode:
+    """The shape ``inferencex_workload`` drives: the ``--inferencex-mode`` one, fixed by default."""
+    return inferencex_mode_option(config) or InferencexMode.FIXED
+
+
+def _fixtures_used(item) -> set[str]:
+    """
+    The fixtures *item* requests, by name.
+
+    A test reaches a workload fixture either by naming it or through the indirect ``workload``
+    parameter, so both are included.
+    """
+    used = set(getattr(item, "fixturenames", ()))
+    callspec = getattr(item, "callspec", None)
+    if callspec is not None:
+        used.add(callspec.params.get("workload"))
+    return used
+
+
+def selected_inferencex_modes(items, config) -> list[InferencexMode]:
     """
     The InferenceX shapes the selected tests will drive.
 
-    A test reaches a workload fixture either by naming it or through the indirect ``workload``
-    parameter, so both are checked. Tests deselected with ``-k`` are not in *items*.
+    ``inferencex_workload`` counts as the shape it resolves to. Deselected tests are not in
+    *items*.
     """
-    used: set[str] = set()
-    for item in items:
-        used.update(getattr(item, "fixturenames", ()))
-        callspec = getattr(item, "callspec", None)
-        if callspec is not None:
-            used.add(callspec.params.get("workload"))
+    used = set().union(*(_fixtures_used(item) for item in items))
+    if "inferencex_workload" in used:
+        used.add(INFERENCEX_FIXTURES_BY_MODE[inferencex_workload_mode(config)])
     return [mode for mode, fixture in INFERENCEX_FIXTURES_BY_MODE.items() if fixture in used]
+
+
+def pytest_collection_modifyitems(config, items):
+    """
+    Deselect the other shape's InferenceX tests when ``--inferencex-mode`` names one.
+
+    Deselected rather than skipped, so a single-shape run reports only what it ran.
+    """
+    mode = inferencex_mode_option(config)
+    if mode is None:
+        return
+    others = {
+        fixture for shape, fixture in INFERENCEX_FIXTURES_BY_MODE.items() if shape is not mode
+    }
+    keep, deselected = [], []
+    for item in items:
+        (deselected if _fixtures_used(item) & others else keep).append(item)
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+        items[:] = keep
 
 
 #: Keyed by a profile's ``expected_metrics`` field.
@@ -456,7 +498,7 @@ def report_environment(request, workload_profile, prometheus_url, grafana_url) -
         environment_rows(
             request.config,
             workload_profile,
-            selected_inferencex_modes(request.session.items),
+            selected_inferencex_modes(request.session.items, request.config),
             prometheus_url,
             grafana_url,
         )
@@ -643,6 +685,16 @@ def inferencex_agentic_workload(workload_profile: profiles.Profile, profiler_pip
     Provide an InferenceX workload with an agentic shape: long shared-prefix prompts, short answers.
     """
     return _inferencex_workload(workload_profile, InferencexMode.AGENTIC)
+
+
+@pytest.fixture(scope="session")
+def inferencex_workload(request):
+    """
+    Provide the InferenceX workload for tests that drive a single shape: the one
+    ``--inferencex-mode`` names, or the fixed shape when the flag is absent.
+    """
+    mode = inferencex_workload_mode(request.config)
+    return request.getfixturevalue(INFERENCEX_FIXTURES_BY_MODE[mode])
 
 
 @pytest.fixture(scope="session")

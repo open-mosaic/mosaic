@@ -173,9 +173,10 @@ class TestNCCLProfilerTelemetry:
         :description: Verify NCCL profiler metrics are exported to Prometheus.
             Waits for the metric totals to settle, snapshots them.
             Runs the workload, then requires each expected metric for the active profile
-            to increase above that baseline. InferenceX runs twice: a fixed shape asserting
-            the full set, and an agentic shape that omits the collective transfer size/time
-            metrics, which that shape does not reliably produce.
+            to increase above that baseline. InferenceX has a case per shape, narrowed to one
+            by --inferencex-mode: a fixed shape asserting the full set, and an agentic shape
+            that omits the collective transfer size/time metrics, which that shape does not
+            reliably produce.
         """
         timeouts = workload_profile.timeouts
         nccl_profiler_metrics = expected_nccl_profiler_metrics(workload, workload_profile)
@@ -260,7 +261,7 @@ class TestNCCLProfilerTelemetry:
 
     def test_every_node_reports_nccl_metrics(
         self,
-        inferencex_fixed_workload,
+        inferencex_workload,
         workload_profile,
         prometheus_url: str,
         reporter,
@@ -275,7 +276,7 @@ class TestNCCLProfilerTelemetry:
         """
         coverage = workload_profile.coverage
         timeouts = workload_profile.timeouts
-        metrics = expected_nccl_profiler_metrics(inferencex_fixed_workload, workload_profile)
+        metrics = expected_nccl_profiler_metrics(inferencex_workload, workload_profile)
 
         probe = "nccl_profiler_collective_bytes_total"
         if probe not in metrics:
@@ -285,7 +286,7 @@ class TestNCCLProfilerTelemetry:
         baseline_by_gpu = metric_totals_by_gpu(prometheus_url, probe)
         baseline_by_comm = metric_totals_by(prometheus_url, probe, label="communicator")
 
-        workload_result = _run_workload(reporter, inferencex_fixed_workload, timeouts.workload)
+        workload_result = _run_workload(reporter, inferencex_workload, timeouts.workload)
 
         def active_participants():
             """GPUs, hosts and communicators whose totals rose during this workload."""
