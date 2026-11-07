@@ -72,6 +72,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               workflow_id,
+              branch: "main",
               per_page: 2,
             });
             const runs = data.workflow_runs;
