@@ -41,7 +41,9 @@ jobs:
     name: Build and Test Profiler Plugin
     needs: check-paths
     if: github.event_name == 'workflow_dispatch' || needs.check-paths.outputs.nccl-profiler == 'true'
-    runs-on: ubuntu-latest
+    # Pinned: use ubuntu-24.04 to match vllm/vllm-openai base image and
+    # to ensure CUDA 13.0 packages are available.
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: profiler
