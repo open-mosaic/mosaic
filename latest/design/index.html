@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
     
     
       
@@ -675,6 +675,17 @@
     <span class="md-ellipsis">
       
         Event Flow and Timing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cuda-graph-support" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CUDA Graph Support
       
     </span>
   </a>
@@ -1577,6 +1588,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#cuda-graph-support" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CUDA Graph Support
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#circular-buffer-design" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1898,6 +1920,17 @@ SPDX-License-Identifier: Apache-2.0
 <li><strong>ProxyOp Stop</strong>: All steps for this channel complete</li>
 <li><strong>Total Collective Time</strong> = <code>Coll START → Last ProxyOp STOP</code></li>
 </ol>
+<h3 id="cuda-graph-support">CUDA Graph Support<a class="headerlink" href="#cuda-graph-support" title="Permanent link">#</a></h3>
+<p>Frameworks such as vLLM capture NCCL operations into CUDA graphs and replay them many times.
+The NCCL API is only called once, during capture, so the profiler can only observe a replay through events
+that NCCL emits at replay time. The NCCL version dictates which events are emitted during replay.</p>
+<p><strong>NCCL &lt; 2.31</strong>: NCCL only adds a host callback to the captured graph when the operation has proxy (network) work.
+Intra-node replays (NVLink, PCIe, shared memory) produce no profiler events, and only the capture itself is visible.
+Multi-node replays still produce <code>Coll</code>, <code>ProxyOp</code> and <code>ProxyStep</code> events. 
+To capture all events disable CUDA graph use in vLLM by passing the <code>--enforce-eager</code> flag.</p>
+<p><strong>NCCL &gt;= 2.31</strong>: NCCL also adds the host callback when <code>KernelCh</code> events are enabled.
+Every replay, including intra-node replays, emits the events below.
+A dedicated NCCL profiler thread reports <code>KernelCh</code> start and stop timestamps from the GPU for each replay.</p>
 <h3 id="circular-buffer-design">Circular Buffer Design<a class="headerlink" href="#circular-buffer-design" title="Permanent link">#</a></h3>
 <p>The plugin uses a lock-free circular buffer design with 4 pre-allocated buffers per communicator:
 - Each buffer holds 100,000 events
@@ -2273,7 +2306,7 @@ SPDX-License-Identifier: Apache-2.0
       <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["content.code.copy", "content.footnote.tooltips", "navigation.sections", "navigation.expand"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
+      <script src="../assets/javascripts/bundle.a5f9d56c.min.js"></script>
       
     
   </body>

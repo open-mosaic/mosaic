@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
     
     
       
@@ -1231,6 +1231,8 @@ SPDX-License-Identifier: Apache-2.0
 <li>Verify <code>NCCL_PROFILER_PLUGIN=otel</code> is set</li>
 <li>Check that <code>LD_LIBRARY_PATH</code> includes the plugin directory</li>
 <li>Ensure the plugin library exists and is executable</li>
+<li>With <code>NCCL_DEBUG=INFO</code>, look for <code>PROFILER/Plugin: libnccl-profiler-otel.so: ... cannot open shared object file</code>,
+  which means a library the plugin depends on is missing. Run <code>ldd</code> on the plugin to find it.</li>
 </ul>
 </li>
 <li>
@@ -1256,6 +1258,20 @@ SPDX-License-Identifier: Apache-2.0
 <li>Increase window trigger settings if events are generated too quickly</li>
 <li>Check that telemetry thread is processing windows in time</li>
 <li>Verify system has sufficient CPU for background processing</li>
+</ul>
+</li>
+<li>
+<p><strong>No collective metrics with vLLM 0.29 or later</strong>:</p>
+<ul>
+<li>vLLM has several all-reduce backends and only falls back to NCCL when none of them applies.
+  <code>--disable-custom-all-reduce</code> only disables vLLM's custom all-reduce, not the backends below.</li>
+<li>Since vLLM 0.29.0, FlashInfer all-reduce is enabled by default and bypasses NCCL.
+  Set <code>VLLM_ALLREDUCE_USE_FLASHINFER=0</code>.</li>
+<li>PyTorch symmetric-memory all-reduce is also enabled by default and bypasses NCCL on GPUs with
+  compute capability 9.0, 10.0, 10.3 or 10.7 (for example H100, H200, B200, GB200, B300).
+  On these GPUs, also set <code>VLLM_ALLREDUCE_USE_SYMM_MEM=0</code>.
+  Check the compute capability with <code>nvidia-smi --query-gpu=name,compute_cap --format=csv</code>.</li>
+<li>Routing all-reduces through NCCL can be slower than these backends for small messages.</li>
 </ul>
 </li>
 </ol>
@@ -1325,7 +1341,7 @@ SPDX-License-Identifier: Apache-2.0
       <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["content.code.copy", "content.footnote.tooltips", "navigation.sections", "navigation.expand"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
+      <script src="../assets/javascripts/bundle.a5f9d56c.min.js"></script>
       
     
   </body>

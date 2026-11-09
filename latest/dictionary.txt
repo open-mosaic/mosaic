@@ -59,6 +59,7 @@ https
 inference
 inferencing
 intents
+intra
 ip
 keychain
 kowalski

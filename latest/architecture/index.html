@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
     
     
       
@@ -1737,7 +1737,11 @@ We also provide documentation on how to compile and include Mosaic profiler plug
 <p>Currently, Mosaic reference implementation is defined as follows:</p>
 <ul>
 <li>Workload<ul>
-<li>vLLM inference</li>
+<li>vLLM inference (vLLM 0.32.0)</li>
+</ul>
+</li>
+<li>Collective communication library<ul>
+<li>NCCL 2.32.3</li>
 </ul>
 </li>
 <li>Deployment
@@ -1765,7 +1769,7 @@ We also provide documentation on how to compile and include Mosaic profiler plug
 <p>This reference is opinionated but intentionally simple.</p>
 <div class="admonition warning">
 <p class="admonition-title">Known Issue</p>
-<p>Our reference implementation is based on vLLM 0.15.0, which has a known issue related to pipeline parallelism.
+<p>vLLM has a known issue related to pipeline parallelism.
 Please refer to the GitHub issue for details: <a href="https://github.com/vllm-project/vllm/issues/27116">https://github.com/vllm-project/vllm/issues/27116</a></p>
 </div>
 <h2 id="design-boundaries">Design Boundaries<a class="headerlink" href="#design-boundaries" title="Permanent link">#</a></h2>
@@ -1868,7 +1872,7 @@ Mosaic delivers production-ready GPU observability without sacrificing performan
       <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["content.code.copy", "content.footnote.tooltips", "navigation.sections", "navigation.expand"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
+      <script src="../assets/javascripts/bundle.a5f9d56c.min.js"></script>
       
     
   </body>
