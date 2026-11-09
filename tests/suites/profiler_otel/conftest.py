@@ -142,6 +142,89 @@ NCCL_PROFILER_METRICS_EXPECTED_AGGREGATED_MOE = list(
 )
 NCCL_PROFILER_METRICS_EXPECTED_DISAGG_MOE = list(NCCL_PROFILER_METRICS_EXPECTED_INFERENCEX_WORKLOAD)
 
+# The agentic shape (long shared-prefix prompts, short answers) does not reliably produce
+# per-transfer collective events, so these are asserted for the fixed shape only.
+AGENTIC_UNRELIABLE_METRICS = frozenset(
+    {
+        "nccl_profiler_collective_transfer_size_bytes_sum",
+        "nccl_profiler_collective_transfer_time_microseconds_sum",
+    }
+)
+
+
+class ShapedInferencexWorkload(InferencexWorkload):
+    """An InferenceX workload that records the shape its options were built for."""
+
+    def __init__(self, *, mode: InferencexMode, **kwargs):
+        super().__init__(**kwargs)
+        self.mode = InferencexMode(mode)
+
+
+#: The InferenceX workload fixture for each shape.
+INFERENCEX_FIXTURES_BY_MODE = {
+    InferencexMode.FIXED: "inferencex_fixed_workload",
+    InferencexMode.AGENTIC: "inferencex_agentic_workload",
+}
+
+
+def inferencex_mode_option(config) -> InferencexMode | None:
+    """The shape ``--inferencex-mode`` narrows the run to, or None to run both."""
+    chosen = config.getoption("--inferencex-mode")
+    return None if chosen is None else InferencexMode(chosen)
+
+
+def inferencex_workload_mode(config) -> InferencexMode:
+    """The shape ``inferencex_workload`` drives: the ``--inferencex-mode`` one, fixed by default."""
+    return inferencex_mode_option(config) or InferencexMode.FIXED
+
+
+def _fixtures_used(item) -> set[str]:
+    """
+    The fixtures *item* requests, by name.
+
+    A test reaches a workload fixture either by naming it or through the indirect ``workload``
+    parameter, so both are included.
+    """
+    used = set(getattr(item, "fixturenames", ()))
+    callspec = getattr(item, "callspec", None)
+    if callspec is not None:
+        used.add(callspec.params.get("workload"))
+    return used
+
+
+def selected_inferencex_modes(items, config) -> list[InferencexMode]:
+    """
+    The InferenceX shapes the selected tests will drive.
+
+    ``inferencex_workload`` counts as the shape it resolves to. Deselected tests are not in
+    *items*.
+    """
+    used = set().union(*(_fixtures_used(item) for item in items))
+    if "inferencex_workload" in used:
+        used.add(INFERENCEX_FIXTURES_BY_MODE[inferencex_workload_mode(config)])
+    return [mode for mode, fixture in INFERENCEX_FIXTURES_BY_MODE.items() if fixture in used]
+
+
+def pytest_collection_modifyitems(config, items):
+    """
+    Deselect the other shape's InferenceX tests when ``--inferencex-mode`` names one.
+
+    Deselected rather than skipped, so a single-shape run reports only what it ran.
+    """
+    mode = inferencex_mode_option(config)
+    if mode is None:
+        return
+    others = {
+        fixture for shape, fixture in INFERENCEX_FIXTURES_BY_MODE.items() if shape is not mode
+    }
+    keep, deselected = [], []
+    for item in items:
+        (deselected if _fixtures_used(item) & others else keep).append(item)
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+        items[:] = keep
+
+
 #: Keyed by a profile's ``expected_metrics`` field.
 METRIC_SETS_BY_NAME = {
     "aggregated_dense": NCCL_PROFILER_METRICS_EXPECTED_INFERENCEX_WORKLOAD,
@@ -155,8 +238,9 @@ def expected_nccl_profiler_metrics(workload, profile: profiles.Profile | None = 
     Return the NCCL profiler metric names we assert on for this workload.
 
     The InferenceX workload serves every tier, aggregated and disaggregated alike, so its
-    expected set cannot be derived from the class -- it comes from the profile. The prompt and
-    NCCL workloads are still distinguishable by type.
+    expected set cannot be derived from the class -- it comes from the profile. An agentic
+    run drops AGENTIC_UNRELIABLE_METRICS; any other InferenceX run is fixed and gets the
+    full set. The prompt and NCCL workloads are still distinguishable by type.
     """
     if isinstance(workload, PromptWorkload):
         return NCCL_PROFILER_METRICS_EXPECTED_PROMPT_WORKLOAD
@@ -165,7 +249,10 @@ def expected_nccl_profiler_metrics(workload, profile: profiles.Profile | None = 
     if isinstance(workload, InferencexWorkload):
         if profile is None:
             raise ValueError("a profile is required to pick the InferenceX metric set")
-        return METRIC_SETS_BY_NAME[profile.expected_metrics]
+        metrics = METRIC_SETS_BY_NAME[profile.expected_metrics]
+        if getattr(workload, "mode", None) is InferencexMode.AGENTIC:
+            return [name for name in metrics if name not in AGENTIC_UNRELIABLE_METRICS]
+        return metrics
     raise TypeError(f"Unsupported workload type: {type(workload)!r}")
 
 
@@ -371,14 +458,6 @@ def workload_profile(request) -> profiles.Profile:
 
 
 @pytest.fixture(scope="session")
-def inferencex_mode(request) -> InferencexMode:
-    """
-    The load shape for the InferenceX workload, from ``--inferencex-mode``.
-    """
-    return InferencexMode(request.config.getoption("--inferencex-mode"))
-
-
-@pytest.fixture(scope="session")
 def prometheus_url(workload_profile: profiles.Profile) -> str:
     """
     Provide the Prometheus URL.
@@ -406,9 +485,7 @@ def grafana_url(workload_profile: profiles.Profile) -> str:
 
 
 @pytest.fixture(scope="session", autouse=True)
-def report_environment(
-    request, workload_profile, inferencex_mode, prometheus_url, grafana_url
-) -> None:
+def report_environment(request, workload_profile, prometheus_url, grafana_url) -> None:
     """
     Record the report's environment table, including the addresses this run used.
 
@@ -419,7 +496,11 @@ def report_environment(
     """
     request.config.mosaic_reporter.set_environment(
         environment_rows(
-            request.config, workload_profile, inferencex_mode, prometheus_url, grafana_url
+            request.config,
+            workload_profile,
+            selected_inferencex_modes(request.session.items, request.config),
+            prometheus_url,
+            grafana_url,
         )
     )
 
@@ -558,21 +639,19 @@ def prompt_workload(vllm_config: VllmConfig, profiler_pipeline_warm):
     )
 
 
-@pytest.fixture(scope="session")
-def inferencex_workload(
-    workload_profile: profiles.Profile,
-    inferencex_mode: InferencexMode,
-    profiler_pipeline_warm,
-):
+def _inferencex_workload(
+    workload_profile: profiles.Profile, mode: InferencexMode
+) -> ShapedInferencexWorkload:
     """
-    Provide an InferenceX workload configured by the profile and ``--inferencex-mode``.
+    Build an InferenceX workload of shape *mode*, configured by the profile.
 
     The profile's options for the mode are handed to the workload verbatim: it converts keys to
     benchmark_serving.py flags generically, so a profile can set any flag that script accepts
-    without a change here. The endpoint is layered underneath, where ``None`` means "omit the
+    without a change here. The agentic shape layers ``agentic_options`` (or the framework's
+    defaults) over it. The endpoint is layered underneath, where ``None`` means "omit the
     flag" -- which is how a base_url profile drops the default host/port.
     """
-    options = workload_profile.inferencex_options(inferencex_mode)
+    options = workload_profile.inferencex_options(mode)
     host_port = _endpoint_host_port(workload_profile)
     if host_port is None:
         options.setdefault("base_url", workload_profile.endpoint.base_url)
@@ -585,10 +664,37 @@ def inferencex_workload(
 
     # container_name is left to the workload, which generates one unique to this process and
     # removes it when the run ends however it ends.
-    return InferencexWorkload(
+    return ShapedInferencexWorkload(
+        mode=mode,
         benchmark_options=options,
         docker_exec_timeout=workload_profile.timeouts.workload,
     )
+
+
+@pytest.fixture(scope="session")
+def inferencex_fixed_workload(workload_profile: profiles.Profile, profiler_pipeline_warm):
+    """
+    Provide an InferenceX workload driving the profile's ``benchmark_options`` as written.
+    """
+    return _inferencex_workload(workload_profile, InferencexMode.FIXED)
+
+
+@pytest.fixture(scope="session")
+def inferencex_agentic_workload(workload_profile: profiles.Profile, profiler_pipeline_warm):
+    """
+    Provide an InferenceX workload with an agentic shape: long shared-prefix prompts, short answers.
+    """
+    return _inferencex_workload(workload_profile, InferencexMode.AGENTIC)
+
+
+@pytest.fixture(scope="session")
+def inferencex_workload(request):
+    """
+    Provide the InferenceX workload for tests that drive a single shape: the one
+    ``--inferencex-mode`` names, or the fixed shape when the flag is absent.
+    """
+    mode = inferencex_workload_mode(request.config)
+    return request.getfixturevalue(INFERENCEX_FIXTURES_BY_MODE[mode])
 
 
 @pytest.fixture(scope="session")
@@ -608,6 +714,6 @@ def nccl_workload(workload_profile: profiles.Profile, profiler_pipeline_warm):
 @pytest.fixture
 def workload(request):
     """
-    Dispatch to ``prompt_workload`` or ``inferencex_workload`` via indirect parametrization.
+    Dispatch to a workload fixture, named by ``request.param``, via indirect parametrization.
     """
     return request.getfixturevalue(request.param)

@@ -20,6 +20,7 @@ from production_test_framework.workload.workload import WorkloadStatus
 
 from profiler_otel.conftest import (
     NCCL_PROFILER_METRICS_EXPECTED_PROMPT_WORKLOAD,
+    ShapedInferencexWorkload,
     expected_nccl_profiler_metrics,
     metric_increased,
     metric_total,
@@ -153,11 +154,11 @@ class TestNCCLProfilerTelemetry:
         "workload",
         [
             "prompt_workload",
-            "inferencex_workload",
+            "inferencex_fixed_workload",
+            "inferencex_agentic_workload",
             "nccl_workload",
         ],
         indirect=True,
-        ids=["prompt_workload", "inferencex_workload", "nccl_workload"],
     )
     def test_nccl_metrics_exported_after_inference(
         self,
@@ -172,10 +173,15 @@ class TestNCCLProfilerTelemetry:
         :description: Verify NCCL profiler metrics are exported to Prometheus.
             Waits for the metric totals to settle, snapshots them.
             Runs the workload, then requires each expected metric for the active profile
-            to increase above that baseline.
+            to increase above that baseline. InferenceX has a case per shape, narrowed to one
+            by --inferencex-mode: a fixed shape asserting the full set, and an agentic shape
+            that omits the collective transfer size/time metrics, which that shape does not
+            reliably produce.
         """
         timeouts = workload_profile.timeouts
         nccl_profiler_metrics = expected_nccl_profiler_metrics(workload, workload_profile)
+        if isinstance(workload, ShapedInferencexWorkload):
+            reporter.note(f"InferenceX workload shape: {workload.mode}")
 
         baseline = _settle_and_snapshot(
             reporter, prometheus_url, nccl_profiler_metrics, timeouts.quiesce
