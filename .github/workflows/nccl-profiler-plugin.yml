@@ -138,9 +138,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/nccl
+          # Exact key only: a prefix restore would bring back an NCCL build for a different
+          # CUDA version and leave /tmp/nccl in place, breaking the clone step below.
           key: nccl-v${{ env.NCCL_TAG }}-cuda${{ steps.cuda-toolkit.outputs.cuda }}-${{ runner.os }}
-          restore-keys: |
-            nccl-v${{ env.NCCL_TAG }}-
 
       - name: Clone and build NCCL
         if: steps.cache-nccl.outputs.cache-hit != 'true'

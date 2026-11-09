@@ -102,6 +102,15 @@ RUN pip install "ray[default]==2.60.0"
 # FIXME: Remove this once components are updated to the latest version
 RUN pip install --upgrade pyasn1==0.6.5
 
+# --- Remove vulnerable LMCache (CVE-2026-105192, fixed in 0.5.6) ---
+# The cu129 vLLM base ships lmcache 0.4.4, and lmcache >= 0.5.6 is only published for CUDA 13.
+# Mosaic does not use LMCache (KV transfer uses NIXL), so remove it when the installed version is vulnerable.
+# FIXME: Remove this once the vLLM cu129 base ships lmcache >= 0.5.6
+RUN if python3 -c "import sys, importlib.metadata as m; from packaging.version import Version; \
+        sys.exit(0 if Version(m.version('lmcache')) < Version('0.5.6') else 1)" 2>/dev/null; then \
+      pip uninstall -y lmcache; \
+    fi
+
 # --- Pin the pip NCCL wheel (nvidia-nccl-cu12/cu13) to match the NCCL built above ---
 # torch loads its own pip NCCL, which may take precedence over /usr/local/plugins/lib.
 # --no-deps leaves torch untouched; pip will warn that torch pins an older NCCL.
