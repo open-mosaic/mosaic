@@ -13,9 +13,9 @@ on:
   workflow_dispatch:
 
 env:
-  NCCL_TAG: "2.29.2-1"
+  NCCL_TAG: "2.32.3-1"
   OTEL_CPP_VERSION: "1.25.0"
-  CUDA_VERSION: "12.9.1" # Based on output from `nvcc --version` on vllm/vllm-openai:v0.13.0
+  CUDA_VERSION: "12.9.1" # Matches the default image base, vllm/vllm-openai:v0.32.0-cu129
   LCOV_VERSION: "2.4"
 jobs:
   check-paths:
@@ -41,7 +41,9 @@ jobs:
     name: Build and Test Profiler Plugin
     needs: check-paths
     if: github.event_name == 'workflow_dispatch' || needs.check-paths.outputs.nccl-profiler == 'true'
-    runs-on: ubuntu-latest
+    # Pinned: use ubuntu-24.04 to match vllm/vllm-openai base image and
+    # to ensure CUDA 12.9 / 13.0 packages are available.
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: profiler
@@ -124,7 +126,7 @@ jobs:
           sudo ldconfig
 
       - name: Install CUDA toolkit
-        uses: Jimver/cuda-toolkit@v0.2.30
+        uses: Jimver/cuda-toolkit@v0.2.36
         id: cuda-toolkit
         with:
           cuda: '${{ env.CUDA_VERSION }}'
@@ -136,9 +138,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /tmp/nccl
+          # Exact key only: a prefix restore would bring back an NCCL build for a different
+          # CUDA version and leave /tmp/nccl in place, breaking the clone step below.
           key: nccl-v${{ env.NCCL_TAG }}-cuda${{ steps.cuda-toolkit.outputs.cuda }}-${{ runner.os }}
-          restore-keys: |
-            nccl-v${{ env.NCCL_TAG }}-
 
       - name: Clone and build NCCL
         if: steps.cache-nccl.outputs.cache-hit != 'true'

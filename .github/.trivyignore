@@ -1,10 +1,19 @@
 # SPDX-FileCopyrightText: 2025 Delos Data Inc
 # SPDX-License-Identifier: Apache-2.0
 
-# Ignore until Ray upgrades jackson-core to >=2.18.6.
+# Ignore until Ray bundles jackson-core/jackson-databind >= 2.18.11 in ray_dist.jar.
 # https://github.com/ray-project/ray/blob/master/java/dependencies.bzl
-GHSA-72hv-8253-57qq
+CVE-2026-68497
+CVE-2026-89407
+CVE-2026-89425
+CVE-2026-91776
+CVE-2026-91777
 
-# Ignore until vLLM upgrades xgrammar to >= 0.1.32
-# https://github.com/vllm-project/vllm/blob/main/requirements/common.txt
-CVE-2026-25048
+# Ignore until Ray bundles guava >= 33.7.2 in ray_dist.jar (Ray 2.60.0 still bundles 32.0.1-jre).
+# https://github.com/ray-project/ray/blob/master/java/dependencies.bzl
+CVE-2026-102554
+
+# Ignore until pip vendors setuptools with the fix (pip 26.3 still vendors 70.3.0).
+# setuptools is vendored only for pkg_resources; CVE-2025-47273 is in setuptools.package_index.
+# https://github.com/pypa/pip/blob/main/src/pip/_vendor/vendor.txt
+CVE-2025-47273
