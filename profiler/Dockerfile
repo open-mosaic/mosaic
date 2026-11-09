@@ -96,7 +96,11 @@ RUN pip install cryptography==50.0.2
 RUN pip install --upgrade python-multipart==0.0.32 urllib3==2.8.0 uv==0.13.4 certifi==2026.10.19
 
 # --- Install Ray (Python) ---
-RUN pip install "ray[default]==2.59.0"
+RUN pip install "ray[default]==2.60.0"
+
+# --- Force pyasn1 upgrade for CVE-2026-119194, CVE-2026-119195, CVE-2026-119196, CVE-2026-119197 ---
+# FIXME: Remove this once components are updated to the latest version
+RUN pip install --upgrade pyasn1==0.6.5
 
 # --- Pin the pip NCCL wheel (nvidia-nccl-cu12/cu13) to match the NCCL built above ---
 # torch loads its own pip NCCL, which may take precedence over /usr/local/plugins/lib.
