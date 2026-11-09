@@ -155,9 +155,6 @@ Currently, Mosaic reference implementation is defined as follows:
 
 This reference is opinionated but intentionally simple.
 
-The default `openmosaic/mosaic-vllm` image is built on CUDA 13.0 and requires NVIDIA driver 580 or later.
-A CUDA 12.9 variant is published with the `-cu129` tag suffix.
-
 !!! warning "Known Issue"
     vLLM has a known issue related to pipeline parallelism.
     Please refer to the GitHub issue for details: [https://github.com/vllm-project/vllm/issues/27116](https://github.com/vllm-project/vllm/issues/27116)

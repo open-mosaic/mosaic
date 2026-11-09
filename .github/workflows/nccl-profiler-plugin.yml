@@ -15,7 +15,7 @@ on:
 env:
   NCCL_TAG: "2.32.3-1"
   OTEL_CPP_VERSION: "1.25.0"
-  CUDA_VERSION: "13.0.3" # Matches ARG CUDA_VERSION in vllm/vllm-openai:v0.32.0 (docker/Dockerfile)
+  CUDA_VERSION: "12.9.1" # Matches the default image base, vllm/vllm-openai:v0.32.0-cu129
   LCOV_VERSION: "2.4"
 jobs:
   check-paths:
@@ -42,7 +42,7 @@ jobs:
     needs: check-paths
     if: github.event_name == 'workflow_dispatch' || needs.check-paths.outputs.nccl-profiler == 'true'
     # Pinned: use ubuntu-24.04 to match vllm/vllm-openai base image and
-    # to ensure CUDA 13.0 packages are available.
+    # to ensure CUDA 12.9 / 13.0 packages are available.
     runs-on: ubuntu-24.04
     defaults:
       run:
