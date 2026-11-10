@@ -111,7 +111,16 @@ RUN if python3 -c "import sys, importlib.metadata as m; from packaging.version i
       pip uninstall -y lmcache; \
     fi
 
-# --- Pin the pip NCCL wheel (nvidia-nccl-cu12/cu13) to match the NCCL built above ---
+# --- Reinstall torchcodec from the PyTorch index matching torch's CUDA build ---
+# The vLLM base resolves "torchcodec >= 0.14" across PyPI and the PyTorch CUDA index and takes the highest version.
+# PyPI wheels are built for CUDA 13, so the cu129 base ends up with a torchcodec that needs libnvrtc.so.13 and
+# `vllm` fails on import ("Could not load this library: .../torchcodec/libtorchcodec_image.so").
+# FIXME: Remove this once the vLLM cu129 base ships a torchcodec built for CUDA 12
+RUN TORCH_CUDA=$(pip list --format=freeze | sed -n 's/^torch==.*+//p') && \
+    pip install --no-deps --force-reinstall \
+      --index-url "https://download.pytorch.org/whl/${TORCH_CUDA}" "torchcodec>=0.14"
+
+# --- Pin the pip NCCL wheel(nvidia-nccl-cu12/cu13) to match the NCCL built above ---
 # torch loads its own pip NCCL, which may take precedence over /usr/local/plugins/lib.
 # --no-deps leaves torch untouched; pip will warn that torch pins an older NCCL.
 RUN NCCL_PKG=$(pip list --format=freeze | grep -o '^nvidia-nccl-cu[0-9]*') && \
