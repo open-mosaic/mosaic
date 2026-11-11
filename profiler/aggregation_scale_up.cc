@@ -29,10 +29,16 @@
  *   - This matches the semantics of the proxy-op path, where transfer times are summed per transfer
  *     even when channels overlap in wall clock.
  *
- * CUDA Graph mode has no stable per-channel timestamps, so the fallback assumes each active channel
- * is busy for the inferred network window and uses
- * `activeChannels * networkTime / totalTransfers` for the parent transfer-time cache while only
- * exporting byte/count volume for rank/channel aggregates.
+ * CUDA Graph mode depends on the NCCL version:
+ * - NCCL >= 2.31 emits Coll/P2p and KernelCh events with fresh GPU timestamps on every replay.
+ *   Operations whose KernelCh timing is trusted (see hasTrustedKernelTiming below) use the
+ *   same channel-local path as non-graph mode, so latency and rate are exported.
+ * - NCCL < 2.31 replays reuse stale device timestamp slots, so several operations report the
+ *   same pTimerStart (WindowAggregator::sharedKernelPTimers). These, and operations with no usable
+ *   KernelCh stop, take the fallback: each active channel is assumed busy for the inferred
+ *   network window, the parent transfer-time cache uses
+ *   `activeChannels * networkTime / totalTransfers`, and rank/channel aggregates get byte/count
+ *   volume only.
  */
 
 /**
@@ -139,6 +145,22 @@ void WindowAggregator::finalizeScaleUpOperations(std::map<const void*, InProgres
         }
     };
 
+    // KernelCh timing for one operation is usable when every channel event has a real GPU start and
+    // stop and none of its start timers is shared with another Coll in this window. Shared timers are
+    // stale device slots from NCCL < 2.31 graph replays; channels of one Coll legitimately share a
+    // start timer and are not in sharedKernelPTimers.
+    auto hasTrustedKernelTiming = [&](const std::vector<otelEventHandle_t>* kernelEvents) -> bool
+    {
+        if (!kernelEvents || kernelEvents->empty()) return false;
+        for (const otelEventHandle_t& kch : *kernelEvents)
+        {
+            if (kch.kernelCh.pTimerStart == 0 || !kch.kernelCh.hasStop) return false;
+            if (kch.kernelCh.pTimerStop <= kch.kernelCh.pTimerStart) return false;
+            if (sharedKernelPTimers.count(kch.kernelCh.pTimerStart)) return false;
+        }
+        return true;
+    };
+
     auto bytesForTransferIndex = [&](const InferredTransfers& inf, int transferIndex) -> size_t
     {
         if (inf.numTransfers <= 0 || transferIndex < 0 || transferIndex >= inf.numTransfers)
@@ -180,7 +202,7 @@ void WindowAggregator::finalizeScaleUpOperations(std::map<const void*, InProgres
             continue;
         }
 
-        if (isCudaGraphDriven)
+        if (isCudaGraphDriven && !hasTrustedKernelTiming(kernelEvents))
         {
             double averageTransferTime = 0.0;
             if (inferred.networkTimeFraction > 0.0 && inferred.numTransfers > 0)
@@ -194,11 +216,12 @@ void WindowAggregator::finalizeScaleUpOperations(std::map<const void*, InProgres
             recordTransferCacheBatch(op, inferred.numTransfers, inferred.totalRankBytes, averageTransferTime);
             addRankChannelVolumeOnly(opHandle, op, inferred);
 
-            OTEL_TRACE(NCCL_INIT,
-                       "Finalized scale-up %s (CUDA Graph): %s, bytes=%zu, collectiveTime=%.2f us, transfers=%d, "
-                       "perTransferBytes=%zu",
-                       isColl ? "Coll" : "P2P", op.key.c_str(), op.bytes, collectiveTimeUs, inferred.numTransfers,
-                       inferred.perTransferBytes);
+            OTEL_TRACE(
+                NCCL_INIT,
+                "Finalized scale-up %s (CUDA Graph, volume only): %s, bytes=%zu, collectiveTime=%.2f us, transfers=%d, "
+                "perTransferBytes=%zu",
+                isColl ? "Coll" : "P2P", op.key.c_str(), op.bytes, collectiveTimeUs, inferred.numTransfers,
+                inferred.perTransferBytes);
             continue;
         }
 

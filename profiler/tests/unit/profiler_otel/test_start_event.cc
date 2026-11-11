@@ -7,9 +7,12 @@
 
 #include "../../support/profiler_event_fixture.h"
 
+using testsupport::makeCollApiDescr;
 using testsupport::makeCollDescr;
+using testsupport::makeGroupApiDescr;
 using testsupport::makeGroupDescr;
 using testsupport::makeKernelChDescr;
+using testsupport::makeP2pApiDescr;
 using testsupport::makeP2pDescr;
 using testsupport::makeProxyOpDescr;
 using testsupport::makeProxyStepDescr;
@@ -228,4 +231,76 @@ TEST_F(ProfilerEventTest, StartKernelChEvent)
 
     auto* event = static_cast<otelEventHandle_t*>(kcHandle);
     EXPECT_EQ(event->type, ncclProfileKernelCh);
+}
+
+// API events carry graphCaptured. NCCL only emits them at capture time, so the plugin must latch the
+// flag before it drops GroupApi/CollApi (null handle), and must not allocate a slot for them.
+TEST_F(ProfilerEventTest, GraphCapturedCollApiSetsCommFlagAndIsStillDropped)
+{
+    auto* ctx = static_cast<eventContext*>(context);
+    ASSERT_FALSE(ctx->commState->sawGraphCapture.load());
+
+    auto descr          = makeCollApiDescr("AllReduce", true);
+    void* eHandle       = nullptr;
+    ncclResult_t result = profiler_otel_start_event_v5(context, &eHandle, &descr);
+
+    EXPECT_EQ(result, ncclSuccess);
+    EXPECT_EQ(eHandle, nullptr);
+    EXPECT_TRUE(ctx->commState->sawGraphCapture.load());
+}
+
+TEST_F(ProfilerEventTest, GraphCapturedGroupApiSetsCommFlag)
+{
+    auto* ctx = static_cast<eventContext*>(context);
+
+    auto descr    = makeGroupApiDescr(true);
+    void* eHandle = nullptr;
+    EXPECT_EQ(profiler_otel_start_event_v5(context, &eHandle, &descr), ncclSuccess);
+
+    EXPECT_EQ(eHandle, nullptr);
+    EXPECT_TRUE(ctx->commState->sawGraphCapture.load());
+}
+
+TEST_F(ProfilerEventTest, GraphCapturedP2pApiSetsCommFlagAndKeepsMarker)
+{
+    auto* ctx = static_cast<eventContext*>(context);
+
+    auto descr    = makeP2pApiDescr("Send", nullptr, true);
+    void* eHandle = nullptr;
+    EXPECT_EQ(profiler_otel_start_event_v5(context, &eHandle, &descr), ncclSuccess);
+
+    EXPECT_NE(eHandle, nullptr);
+    EXPECT_TRUE(ctx->commState->sawGraphCapture.load());
+}
+
+TEST_F(ProfilerEventTest, EagerApiEventsDoNotSetGraphCaptureFlag)
+{
+    auto* ctx = static_cast<eventContext*>(context);
+
+    auto collApi  = makeCollApiDescr("AllReduce", false);
+    auto groupApi = makeGroupApiDescr(false);
+    auto p2pApi   = makeP2pApiDescr("Send", nullptr, false);
+    void* eHandle = nullptr;
+    EXPECT_EQ(profiler_otel_start_event_v5(context, &eHandle, &collApi), ncclSuccess);
+    EXPECT_EQ(profiler_otel_start_event_v5(context, &eHandle, &groupApi), ncclSuccess);
+    EXPECT_EQ(profiler_otel_start_event_v5(context, &eHandle, &p2pApi), ncclSuccess);
+
+    EXPECT_FALSE(ctx->commState->sawGraphCapture.load());
+}
+
+// On NCCL >= 2.31 a replayed Coll carries the capture-time CollApi ref as parentObj. The plugin drops
+// CollApi, so that ref is null and the replayed Coll must still be tracked normally.
+TEST_F(ProfilerEventTest, ReplayedCollWithNullApiParentIsTracked)
+{
+    auto collApi    = makeCollApiDescr("AllReduce", true);
+    void* apiHandle = nullptr;
+    ASSERT_EQ(profiler_otel_start_event_v5(context, &apiHandle, &collApi), ncclSuccess);
+    ASSERT_EQ(apiHandle, nullptr);
+
+    auto descr    = makeCollDescr("AllReduce", 1024, "ncclInt32", 2, "Ring", "Simple", apiHandle);
+    void* eHandle = nullptr;
+    EXPECT_EQ(profiler_otel_start_event_v5(context, &eHandle, &descr), ncclSuccess);
+    ASSERT_NE(eHandle, nullptr);
+    EXPECT_EQ(static_cast<otelEventHandle_t*>(eHandle)->type, ncclProfileColl);
+    EXPECT_EQ(profiler_otel_stop_event_v5(eHandle), ncclSuccess);
 }
