@@ -98,6 +98,12 @@ The agentic run does not assert `nccl_profiler_collective_transfer_size_bytes_su
 `nccl_profiler_collective_transfer_time_microseconds_sum`, which that shape does not produce
 reliably. The fixed run asserts both.
 
+Keep the agentic `max_concurrency` low enough that the server has steps that only decode.
+The profiler records `nccl_profiler_rank_latency` and `nccl_profiler_transfer_latency` only in a
+window that saw at least three transfer sizes. Prefill fills every batch to the same size, so an
+agentic load that is always in prefill leaves those metrics flat. The `default` profile halves
+the default concurrency for this reason.
+
 By default both shapes run. Pass `--inferencex-mode fixed` or `--inferencex-mode agentic` to run
 only that shape's case; the other is deselected. `test_every_node_reports_nccl_metrics` runs the
 workload once more in the chosen shape, or the fixed shape when the flag is absent. A full run

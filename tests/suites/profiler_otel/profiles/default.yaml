@@ -59,3 +59,14 @@ benchmark_options:
   num_warmups: 2
   ignore_eos: true
   disable_tqdm: true
+
+# DEFAULT_AGENTIC_OPTIONS at half the concurrency. At 8, prefill fills vLLM's 2048-token
+# batches almost every step, so transfer sizes rarely vary enough for the profiler's
+# latency regression, and the latency metrics go flat on some runs.
+agentic_options:
+  num_prompts: 32
+  max_concurrency: 4
+  random_input_len: 8192
+  random_output_len: 64
+  random_prefix_len: 1024
+  random_range_ratio: 0.5

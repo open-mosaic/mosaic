@@ -102,7 +102,7 @@ The tests validate that the following metrics are exported to Prometheus (define
 
 ### Rank/Transfer Metrics
 - `nccl_profiler_rank_bytes_total` - Bytes transferred between ranks
-- `nccl_profiler_rank_latency_microseconds_sum` - Latency between ranks
+- `nccl_profiler_rank_latency_microseconds_count` - Latency between ranks (asserted on `_count`; a fit with a negative intercept records 0)
 - `nccl_profiler_transfer_size_bytes_sum` - Transfer sizes per channel
 
 ## Environment Variables
