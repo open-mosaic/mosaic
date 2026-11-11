@@ -126,6 +126,11 @@ struct CommunicatorState
     // WindowAggregator::classifyScaleUpCommunicatorExecutionMode().
     std::atomic<bool> sawGraphCapture;
 
+    // Set when different Colls in one window report the same KernelCh pTimerStart, the stale
+    // device slot pattern of NCCL < 2.31 graph replays. Sticky: once set, KernelCh timing on
+    // this communicator is never trusted in CUDA_GRAPH mode. NCCL >= 2.31 never sets it.
+    std::atomic<bool> sawStaleKernelTimers;
+
     bool isScaleUpCudaGraphDriven() const
     {
         return scaleUpExecMode.load(std::memory_order_acquire) == static_cast<uint8_t>(ScaleUpExecMode::CUDA_GRAPH);

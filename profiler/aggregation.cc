@@ -647,14 +647,15 @@ void WindowAggregator::identifyGroupedAlltoAllOperations(
  * CUDA_GRAPH is sticky. NON_CUDA_GRAPH is set from UNKNOWN once any KernelCh is seen without a
  * graph signal, and may later be promoted to CUDA_GRAPH.
  *
- * Independently of the mode, every pTimerStart shared across Coll parents is recorded in
- * sharedKernelPTimers. KernelCh events with such timers cannot be trusted as per-operation
- * timing (see finalizeScaleUpOperations()). Sharing across channels of the same Coll is normal
- * (all channels of a kernel start together) and is not recorded.
+ * Independently of the mode, a shared pTimerStart sets CommunicatorState::sawStaleKernelTimers.
+ * That flag is sticky: once stale slots are seen, no KernelCh timing on the communicator is
+ * trusted (see finalizeScaleUpOperations()). Sharing across channels of the same Coll is normal
+ * (all channels of a kernel start together) and does not count.
  */
 void WindowAggregator::classifyScaleUpCommunicatorExecutionMode()
 {
-    bool sawAnyKernelCh = false;
+    bool sawAnyKernelCh      = false;
+    bool sawSharedCollPTimer = false;
 
     std::unordered_map<uint64_t, const void*> firstHandleByPTimerStart;
     firstHandleByPTimerStart.reserve(kernelChByParent.size() * 2);
@@ -672,10 +673,16 @@ void WindowAggregator::classifyScaleUpCommunicatorExecutionMode()
             uint64_t pTimerStart = kch.kernelCh.pTimerStart;
             auto it              = firstHandleByPTimerStart.find(pTimerStart);
             if (it == firstHandleByPTimerStart.end())
+            {
                 firstHandleByPTimerStart.emplace(pTimerStart, parentHandle);
+            }
             else if (it->second != parentHandle)
-                sharedKernelPTimers.insert(pTimerStart);
+            {
+                sawSharedCollPTimer = true;
+                break;
+            }
         }
+        if (sawSharedCollPTimer) break;
     }
 
     CommunicatorState* commState = nullptr;
@@ -693,6 +700,13 @@ void WindowAggregator::classifyScaleUpCommunicatorExecutionMode()
         return;
     }
 
+    if (sawSharedCollPTimer && !commState->sawStaleKernelTimers.load(std::memory_order_relaxed))
+    {
+        commState->sawStaleKernelTimers.store(true, std::memory_order_release);
+        OTEL_TRACE(NCCL_INIT, "Stale KernelCh timers observed on communicator commHash=%lu",
+                   (unsigned long)commState->comm_hash);
+    }
+
     CommunicatorState::ScaleUpExecMode execMode =
         static_cast<CommunicatorState::ScaleUpExecMode>(commState->scaleUpExecMode.load(std::memory_order_acquire));
 
@@ -702,7 +716,7 @@ void WindowAggregator::classifyScaleUpCommunicatorExecutionMode()
     }
 
     const bool sawGraphCapture   = commState->sawGraphCapture.load(std::memory_order_acquire);
-    const bool cudaGraphDetected = sawGraphCapture || !sharedKernelPTimers.empty();
+    const bool cudaGraphDetected = sawGraphCapture || sawSharedCollPTimer;
 
     if (cudaGraphDetected)
     {

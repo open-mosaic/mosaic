@@ -175,8 +175,9 @@ TEST_F(WindowAggregatorTest, GraphCapturedCommWithFreshKernelTimersMatchesNonGra
     EXPECT_DOUBLE_EQ(graphCollIt->second.cachedTotalTransferTimeUs, eagerCollIt->second.cachedTotalTransferTimeUs);
 }
 
-// A window can mix stale (shared pTimer) and fresh replays. Only the fresh one contributes intervals.
-TEST_F(WindowAggregatorTest, CudaGraphMixedWindowOnlyTrustedOpsContributeIntervals)
+// A window can mix stale (shared pTimer) and fresh-looking replays. Once stale timers are seen, no KernelCh
+// timing on the communicator is trusted, so even the op with its own timer stays volume-only.
+TEST_F(WindowAggregatorTest, CudaGraphMixedWindowStaleTimersMakeAllOpsVolumeOnly)
 {
     const uint64_t sharedPTimerStart = 5000000;
     const uint64_t freshPTimerStart  = 6000000;
@@ -206,18 +207,137 @@ TEST_F(WindowAggregatorTest, CudaGraphMixedWindowOnlyTrustedOpsContributeInterva
     aggregator->finalize();
 
     EXPECT_STREQ(commState->getScaleUpExecModeString(), "cuda_graph");
+    EXPECT_TRUE(commState->sawStaleKernelTimers.load());
 
     const auto& rankTransfers = aggregator->getRankTransfers();
     ASSERT_EQ(rankTransfers.size(), 1u);
     const AggregatedTransfer& rank = rankTransfers.begin()->second;
-    EXPECT_FALSE(rank.intervals.empty());
-    EXPECT_GT(rank.totalTimeUs, 0.0);
-    // coll1/coll2 add byte/count volume without intervals, so intervals cover only coll3's transfers.
-    EXPECT_GT((size_t)rank.count, rank.intervals.size());
-    for (const auto& interval : rank.intervals)
+    EXPECT_GT(rank.count, 0);
+    EXPECT_TRUE(rank.intervals.empty());
+    EXPECT_EQ(rank.totalTimeUs, 0.0);
+}
+
+// Stale timers are sticky across windows: a later window whose single replay has no twin is still untrusted.
+TEST_F(WindowAggregatorTest, StaleKernelTimersStayUntrustedInLaterWindows)
+{
+    const uint64_t sharedPTimerStart = 5000000;
+    auto commState                   = makeScaleUpCommState(false);
+    const size_t bytes               = 1024 * 1024;
+
+    auto coll1 =
+        createCollectiveEventWithCommState("AllReduce", "Ring", "Simple", 2, bytes, 100.0, 200.0, commState.get());
+    aggregator->addEvent(coll1);
+    auto kch1 = createKernelChEvent(0, sharedPTimerStart, sharedPTimerStart + 1000, 200.0, 220.0, &coll1);
+    aggregator->addEvent(kch1);
+    auto coll2 =
+        createCollectiveEventWithCommState("AllReduce", "Ring", "Simple", 2, bytes, 300.0, 400.0, commState.get());
+    aggregator->addEvent(coll2);
+    auto kch2 = createKernelChEvent(0, sharedPTimerStart, sharedPTimerStart + 2000, 400.0, 420.0, &coll2);
+    aggregator->addEvent(kch2);
+    aggregator->finalize();
+    ASSERT_TRUE(commState->sawStaleKernelTimers.load());
+
+    WindowAggregator nextWindow(0);
+    auto coll3 =
+        createCollectiveEventWithCommState("AllReduce", "Ring", "Simple", 2, bytes, 500.0, 505.0, commState.get());
+    nextWindow.addEvent(coll3);
+    auto kch3a = createKernelChEvent(0, sharedPTimerStart, sharedPTimerStart + 40000, 501.0, 541.0, &coll3);
+    nextWindow.addEvent(kch3a);
+    auto kch3b = createKernelChEvent(1, sharedPTimerStart, sharedPTimerStart + 42000, 501.0, 543.0, &coll3);
+    nextWindow.addEvent(kch3b);
+    nextWindow.finalize();
+
+    const auto& rankTransfers = nextWindow.getRankTransfers();
+    ASSERT_FALSE(rankTransfers.empty());
+    for (const auto& rt : rankTransfers)
     {
-        EXPECT_GE(interval.first, 501.0);
-        EXPECT_LE(interval.second, 543.0);
+        EXPECT_GT(rt.second.totalBytes, 0u);
+        EXPECT_TRUE(rt.second.intervals.empty());
+    }
+}
+
+// P2P ops are not scanned for shared timers, but stale Coll timers on the same communicator make them
+// volume-only too.
+TEST_F(WindowAggregatorTest, StaleCollTimersMakeP2POnSameCommVolumeOnly)
+{
+    const uint64_t sharedPTimerStart = 5000000;
+    auto commState                   = makeScaleUpCommState(false);
+    const size_t bytes               = 1024 * 1024;
+
+    auto coll1 =
+        createCollectiveEventWithCommState("AllReduce", "Ring", "Simple", 2, bytes, 100.0, 200.0, commState.get());
+    aggregator->addEvent(coll1);
+    auto kch1 = createKernelChEvent(0, sharedPTimerStart, sharedPTimerStart + 1000, 200.0, 220.0, &coll1);
+    aggregator->addEvent(kch1);
+    auto coll2 =
+        createCollectiveEventWithCommState("AllReduce", "Ring", "Simple", 2, bytes, 300.0, 400.0, commState.get());
+    aggregator->addEvent(coll2);
+    auto kch2 = createKernelChEvent(0, sharedPTimerStart, sharedPTimerStart + 2000, 400.0, 420.0, &coll2);
+    aggregator->addEvent(kch2);
+
+    auto p2p      = createP2PEvent("Send", 1, 1, bytes, 500.0, 505.0);
+    p2p.commState = commState.get();
+    aggregator->addEvent(p2p);
+    auto kchP2p = createKernelChEvent(0, 7000000, 7040000, 501.0, 541.0, &p2p);
+    aggregator->addEvent(kchP2p);
+
+    aggregator->finalize();
+
+    EXPECT_STREQ(commState->getScaleUpExecModeString(), "cuda_graph");
+    const auto& p2ps = aggregator->getP2Ps();
+    ASSERT_FALSE(p2ps.empty());
+
+    bool sawP2PRank = false;
+    for (const auto& rt : aggregator->getRankTransfers())
+    {
+        EXPECT_TRUE(rt.second.intervals.empty()) << rt.first;
+        if (rt.first.find("_Pipeline") != std::string::npos) sawP2PRank = true;
+    }
+    EXPECT_TRUE(sawP2PRank);
+}
+
+// A graph-captured communicator without stale timers: an op with no KernelCh events takes the normal path,
+// as it did before graphCaptured classification existed.
+TEST_F(WindowAggregatorTest, GraphCapturedCommOpWithoutKernelChUsesNormalPath)
+{
+    auto commState     = makeScaleUpCommState(true);
+    const size_t bytes = 1024 * 1024;
+
+    auto coll =
+        createCollectiveEventWithCommState("AllReduce", "Ring", "Simple", 2, bytes, 100.0, 150.0, commState.get());
+    aggregator->addEvent(coll);
+    aggregator->finalize();
+
+    EXPECT_STREQ(commState->getScaleUpExecModeString(), "cuda_graph");
+    EXPECT_FALSE(commState->sawStaleKernelTimers.load());
+
+    const auto& rankTransfers = aggregator->getRankTransfers();
+    ASSERT_FALSE(rankTransfers.empty());
+    for (const auto& rt : rankTransfers)
+    {
+        EXPECT_FALSE(rt.second.intervals.empty());
+        EXPECT_GT(rt.second.totalTimeUs, 0.0);
+    }
+}
+
+// Once stale timers are seen, an op with no KernelCh is volume-only as well.
+TEST_F(WindowAggregatorTest, StaleTimersCommOpWithoutKernelChIsVolumeOnly)
+{
+    auto commState = makeScaleUpCommState(true);
+    commState->sawStaleKernelTimers.store(true);
+    const size_t bytes = 1024 * 1024;
+
+    auto coll =
+        createCollectiveEventWithCommState("AllReduce", "Ring", "Simple", 2, bytes, 100.0, 150.0, commState.get());
+    aggregator->addEvent(coll);
+    aggregator->finalize();
+
+    const auto& rankTransfers = aggregator->getRankTransfers();
+    ASSERT_FALSE(rankTransfers.empty());
+    for (const auto& rt : rankTransfers)
+    {
+        EXPECT_GT(rt.second.totalBytes, 0u);
+        EXPECT_TRUE(rt.second.intervals.empty());
     }
 }
 

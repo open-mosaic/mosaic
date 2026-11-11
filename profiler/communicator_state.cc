@@ -31,7 +31,8 @@ CommunicatorState::CommunicatorState()
       gpu_uuid(""),
       comm_type(CommType::UNKNOWN),
       scaleUpExecMode(static_cast<uint8_t>(ScaleUpExecMode::UNKNOWN)),
-      sawGraphCapture(false)
+      sawGraphCapture(false),
+      sawStaleKernelTimers(false)
 {
     // Heap-allocate buffers to avoid stack overflow (~40 MB total)
     // Allocate array of buffer pointers

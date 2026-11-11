@@ -8,7 +8,6 @@
 #include <map>
 #include <set>
 #include <string>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -268,11 +267,6 @@ private:
 
     // KernelCh events grouped by their parent Coll/P2P handle (for scale-up analysis)
     std::map<const void*, std::vector<otelEventHandle_t>> kernelChByParent;
-
-    // KernelCh pTimerStart values reported under more than one Coll parent in this window.
-    // Filled by classifyScaleUpCommunicatorExecutionMode(); such timers are stale device slots
-    // (NCCL < 2.31 graph replay), so finalizeScaleUpOperations() does not use them for timing.
-    std::unordered_set<uint64_t> sharedKernelPTimers;
 
     // KernelLaunch events (informational)
     std::vector<otelEventHandle_t> kernelLaunches;

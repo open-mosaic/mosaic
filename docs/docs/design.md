@@ -173,12 +173,14 @@ Once a communicator is labelled `cuda_graph` it keeps that label.
 ### Latency in CUDA graph mode
 
 For each scale-up operation in a `cuda_graph` communicator, the plugin checks whether the `KernelCh` timing can be trusted.
-Timing is trusted when every channel has a GPU start and stop timestamp,
-and no other operation in the same window reports the same start timestamp.
+If different operations in a window ever report the same stale start timestamp, the communicator is marked as having stale timers.
+That mark is permanent, and no `KernelCh` timing on the communicator is trusted after that.
+Otherwise, timing is trusted when every `KernelCh` event of the operation has a GPU start and stop timestamp.
 
 - **Trusted** (the normal case on NCCL >= 2.31): the operation follows the same path as non-graph mode.
   Rank and channel transfer time, rate and latency are exported.
-- **Not trusted** (NCCL < 2.31 replays, or a missing `KernelCh` stop): only collective count, collective time and
+  An operation with no `KernelCh` events also follows this path.
+- **Not trusted** (stale timers on NCCL < 2.31, or a missing `KernelCh` stop): only collective count, collective time and
   rank/channel byte volume are exported.
 
 ## Circular Buffer Design
