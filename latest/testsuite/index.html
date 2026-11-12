@@ -1824,7 +1824,7 @@ silent. See <a href="../profiles/#coverage">Hardware Profiles</a> for how covera
 <h4 id="ranktransfer-metrics">Rank/Transfer Metrics<a class="headerlink" href="#ranktransfer-metrics" title="Permanent link">#</a></h4>
 <ul>
 <li><code>nccl_profiler_rank_bytes_total</code> - Bytes transferred between ranks</li>
-<li><code>nccl_profiler_rank_latency_microseconds_sum</code> - Latency between ranks</li>
+<li><code>nccl_profiler_rank_latency_microseconds_count</code> - Latency between ranks (asserted on <code>_count</code>; a fit with a negative intercept records 0)</li>
 <li><code>nccl_profiler_transfer_size_bytes_sum</code> - Transfer sizes per channel</li>
 </ul>
 <h3 id="environment-variables">Environment Variables<a class="headerlink" href="#environment-variables" title="Permanent link">#</a></h3>
