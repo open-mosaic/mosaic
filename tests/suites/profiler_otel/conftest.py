@@ -88,12 +88,12 @@ NCCL_PROFILER_METRICS = [
     "nccl_profiler_p2p_transfer_time_microseconds_sum",  # Histogram (us)
     # Rank Information metrics
     "nccl_profiler_rank_bytes_total",  # Counter (bytes)
-    "nccl_profiler_rank_latency_microseconds_sum",  # Histogram (us)
+    "nccl_profiler_rank_latency_microseconds_count",  # Histogram (us)
     "nccl_profiler_rank_rate_sum",  # Histogram (MB/s)
     # Transfer Information metrics
     "nccl_profiler_transfer_size_bytes_sum",  # Histogram (bytes)
     "nccl_profiler_transfer_time_microseconds_sum",  # Histogram (us)
-    "nccl_profiler_transfer_latency_microseconds_sum",  # Histogram (us)
+    "nccl_profiler_transfer_latency_microseconds_count",  # Histogram (us)
 ]
 
 # Expected metrics based on workload type.
@@ -108,6 +108,7 @@ NCCL_PROFILER_METRICS_EXPECTED_PROMPT_WORKLOAD = [
     "nccl_profiler_transfer_time_microseconds_sum",
 ]
 
+# Latency is asserted on _count: a fit with a negative intercept records 0, leaving _sum flat.
 NCCL_PROFILER_METRICS_EXPECTED_INFERENCEX_WORKLOAD = [
     "nccl_profiler_collective_bytes_total",
     "nccl_profiler_collective_time_microseconds_sum",
@@ -115,10 +116,10 @@ NCCL_PROFILER_METRICS_EXPECTED_INFERENCEX_WORKLOAD = [
     "nccl_profiler_collective_transfer_size_bytes_sum",
     "nccl_profiler_collective_transfer_time_microseconds_sum",
     "nccl_profiler_rank_bytes_total",
-    "nccl_profiler_rank_latency_microseconds_sum",
+    "nccl_profiler_rank_latency_microseconds_count",
     "nccl_profiler_transfer_size_bytes_sum",
     "nccl_profiler_transfer_time_microseconds_sum",
-    "nccl_profiler_transfer_latency_microseconds_sum",
+    "nccl_profiler_transfer_latency_microseconds_count",
 ]
 
 NCCL_PROFILER_METRICS_EXPECTED_NCCL_WORKLOAD = [
