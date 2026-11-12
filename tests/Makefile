@@ -23,6 +23,10 @@ PROFILE_ARGS := --workload-profile $(PROFILE) $(PROFILE_DIR_ARGS)
 # status when the profile is externally deployed. See docs/docs/profiles.md.
 PROFILES_CLI = cd $(TESTS_DIR) && uv run python -m profiler_otel.profiles
 
+# Pull policy for `docker compose up` in setup. CI sets this to "missing" when it tests a
+# locally built profiler image (MOSAIC_VLLM_IMAGE), which cannot be pulled from a registry.
+PULL_POLICY ?= always
+
 FRAMEWORK_SERVICE_NAME ?= production-test-framework
 FRAMEWORK_CONTAINER_NAME ?= production-test-framework
 
@@ -57,7 +61,7 @@ setup: check-uv
 	echo "Starting container stack for profile '$(PROFILE)'..."; \
 	set -a; eval "$$($(PROFILES_CLI) deployment-env $(PROFILE) $(PROFILE_DIR_ARGS))"; set +a; \
 	docker compose -f $(MOSAIC_PATH)/deployments/docker-compose.yml -f "$$VLLM_COMPOSE" \
-		up --wait -d --pull always
+		up --wait -d --pull $(PULL_POLICY)
 
 cleanup: check-uv
 	@set -e; \

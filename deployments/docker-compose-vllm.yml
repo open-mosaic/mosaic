@@ -6,7 +6,8 @@ services:
     build:
       context: .
       dockerfile: ../profiler/Dockerfile
-    image: openmosaic/mosaic-vllm:latest
+    # CI overrides this with a locally built image on PRs that change the profiler.
+    image: ${MOSAIC_VLLM_IMAGE:-openmosaic/mosaic-vllm:latest}
     container_name: mosaic-vllm
     ports:
       - "8080:8080"
