@@ -14,6 +14,11 @@ on:
       - synchronize
   workflow_dispatch:
 
+env:
+  # vLLM base for the locally built PR profiler image. Keep in sync with the PR entry of the
+  # build matrix in nccl-profiler-plugin-container.yml so the GHA build cache scope matches.
+  VLLM_BASE_TAG: v0.32.0-cu129
+
 jobs:
   integration-tests:
     name: Run Integration Tests
@@ -22,6 +27,10 @@ jobs:
       actions: read
       checks: write
       contents: read
+      pull-requests: read
+    env:
+      # Tag for the profiler image built on PRs that change it. Never pushed to a registry.
+      LOCAL_PROFILER_IMAGE: local/mosaic-vllm:pr-${{ github.event.pull_request.number }}-${{ github.sha }}
     defaults:
       run:
         working-directory: tests
@@ -42,6 +51,50 @@ jobs:
         if: github.event_name == 'schedule'
         run: docker system prune --all --force --volumes
 
+      # PRs that change the profiler image inputs build the image here and test it, instead
+      # of testing openmosaic/mosaic-vllm:latest from Docker Hub. Filters match
+      # nccl-profiler-plugin-container.yml.
+      - name: Check profiler paths (pull requests only)
+        if: github.event_name == 'pull_request'
+        id: paths
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            profiler-image:
+              - 'profiler/**/*.cc'
+              - 'profiler/**/*.h'
+              - 'profiler/**/*.hpp'
+              - 'profiler/**/*.c'
+              - 'profiler/**/CMakeLists.txt'
+              - 'profiler/Dockerfile'
+              - '.github/workflows/integration-tests.yml'
+
+      - name: Set up Docker Buildx
+        if: steps.paths.outputs.profiler-image == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build profiler image
+        if: steps.paths.outputs.profiler-image == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: profiler
+          push: false
+          load: true
+          tags: ${{ env.LOCAL_PROFILER_IMAGE }}
+          build-args: |
+            GIT_HASH=${{ github.sha }}
+            VLLM_BASE_TAG=${{ env.VLLM_BASE_TAG }}
+          # Read the cache main writes in nccl-profiler-plugin-container.yml; never write from PRs.
+          cache-from: type=gha,scope=mosaic-vllm-${{ env.VLLM_BASE_TAG }}
+
+      - name: Use locally built profiler image
+        if: steps.paths.outputs.profiler-image == 'true'
+        run: |
+          echo "MOSAIC_VLLM_IMAGE=$LOCAL_PROFILER_IMAGE" >> "$GITHUB_ENV"
+          # The local tag cannot be pulled, so only pull images that are missing.
+          echo "PULL_POLICY=missing" >> "$GITHUB_ENV"
+          echo "Integration tests will use $LOCAL_PROFILER_IMAGE"
+
       - name: Run integration tests
         run: echo "HOME=$HOME" >> $GITHUB_ENV && make cleanup && make test
 
@@ -60,6 +113,10 @@ jobs:
           name: Integration Test Results
           path: ${{ env.HOME }}/tmp/mosaic/test_results.xml
           reporter: java-junit
+
+      - name: Remove locally built profiler image
+        if: always() && steps.paths.outputs.profiler-image == 'true'
+        run: docker image rm -f "$LOCAL_PROFILER_IMAGE" || true
 
       - name: Check previous workflow run state
         if: always() && github.ref == 'refs/heads/main'
