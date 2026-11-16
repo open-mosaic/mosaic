@@ -25,7 +25,10 @@ ncclProfilerEventDescr_v5_t makeProxyOpDescr(uint8_t channelId = 0, int peer = 2
 
 ncclProfilerEventDescr_v5_t makeProxyStepDescr(int step = 0, void* parent = nullptr);
 ncclProfilerEventDescr_v5_t makeGroupDescr(void* parent = nullptr);
-ncclProfilerEventDescr_v5_t makeP2pApiDescr(const char* func = "Send", void* parent = nullptr);
+ncclProfilerEventDescr_v5_t makeP2pApiDescr(const char* func = "Send", void* parent = nullptr,
+                                            bool graphCaptured = false);
+ncclProfilerEventDescr_v5_t makeCollApiDescr(const char* func = "AllReduce", bool graphCaptured = false);
+ncclProfilerEventDescr_v5_t makeGroupApiDescr(bool graphCaptured = false);
 ncclProfilerEventDescr_v5_t makeKernelChDescr(uint8_t channelId = 0, void* parent = nullptr);
 }  // namespace testsupport
 

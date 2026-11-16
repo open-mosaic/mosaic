@@ -119,6 +119,18 @@ struct CommunicatorState
     };
     std::atomic<uint8_t> scaleUpExecMode;  // stores ScaleUpExecMode as uint8_t
 
+    // Set when NCCL reports a GroupApi/CollApi/P2pApi event with graphCaptured=true.
+    // API events are emitted only at capture time (replays re-emit Coll/P2p/KernelCh but
+    // not API events), so this is a sticky "this communicator has captured work" signal.
+    // It is the primary CUDA_GRAPH classification signal; see
+    // WindowAggregator::classifyScaleUpCommunicatorExecutionMode().
+    std::atomic<bool> sawGraphCapture;
+
+    // Set when different Colls in one window report the same KernelCh pTimerStart, the stale
+    // device slot pattern of NCCL < 2.31 graph replays. Sticky: once set, KernelCh timing on
+    // this communicator is never trusted in CUDA_GRAPH mode. NCCL >= 2.31 never sets it.
+    std::atomic<bool> sawStaleKernelTimers;
+
     bool isScaleUpCudaGraphDriven() const
     {
         return scaleUpExecMode.load(std::memory_order_acquire) == static_cast<uint8_t>(ScaleUpExecMode::CUDA_GRAPH);

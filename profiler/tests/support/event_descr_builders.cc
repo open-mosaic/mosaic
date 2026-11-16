@@ -66,12 +66,30 @@ ncclProfilerEventDescr_v5_t makeGroupDescr(void* parent)
     return descr;
 }
 
-ncclProfilerEventDescr_v5_t makeP2pApiDescr(const char* func, void* parent)
+ncclProfilerEventDescr_v5_t makeP2pApiDescr(const char* func, void* parent, bool graphCaptured)
 {
     ncclProfilerEventDescr_v5_t descr = {};
     descr.type                        = ncclProfileP2pApi;
     descr.p2pApi.func                 = func;
+    descr.p2pApi.graphCaptured        = graphCaptured;
     descr.parentObj                   = parent;
+    return descr;
+}
+
+ncclProfilerEventDescr_v5_t makeCollApiDescr(const char* func, bool graphCaptured)
+{
+    ncclProfilerEventDescr_v5_t descr = {};
+    descr.type                        = ncclProfileCollApi;
+    descr.collApi.func                = func;
+    descr.collApi.graphCaptured       = graphCaptured;
+    return descr;
+}
+
+ncclProfilerEventDescr_v5_t makeGroupApiDescr(bool graphCaptured)
+{
+    ncclProfilerEventDescr_v5_t descr = {};
+    descr.type                        = ncclProfileGroupApi;
+    descr.groupApi.graphCaptured      = graphCaptured;
     return descr;
 }
 

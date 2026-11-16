@@ -80,6 +80,31 @@ static otelEventHandle_t* findEventHandleInBuffers(CommunicatorState* commState,
     return NULL;
 }
 
+/**
+ * @brief Check whether an event is an API-level event emitted during CUDA graph capture.
+ *
+ * Only GroupApi, CollApi and P2pApi descriptors carry graphCaptured. They are emitted
+ * once per API call, so for graph workloads they appear at capture time, not on replay.
+ *
+ * @param[in] eDescr Event descriptor from NCCL.
+ *
+ * @return true if eDescr is a GroupApi/CollApi/P2pApi event with graphCaptured set.
+ */
+static bool isGraphCapturedApiEvent(const ncclProfilerEventDescr_v5_t* eDescr)
+{
+    switch (eDescr->type)
+    {
+        case ncclProfileGroupApi:
+            return eDescr->groupApi.graphCaptured;
+        case ncclProfileCollApi:
+            return eDescr->collApi.graphCaptured;
+        case ncclProfileP2pApi:
+            return eDescr->p2pApi.graphCaptured;
+        default:
+            return false;
+    }
+}
+
 #ifdef PROFILER_OTEL_ENABLE_TRACE
 /**
  * @brief Get human-readable name for an NCCL event type.
@@ -394,6 +419,17 @@ OTEL_HIDDEN ncclResult_t profiler_otel_start_event_v5(void* context, void** eHan
     {
         OTEL_TRACE(NCCL_INIT, "Skipping KernelCh with NULL parentObj (Recv sub-op, no aggregation value)");
         return ncclSuccess;
+    }
+
+    // Record CUDA graph capture before the API events are filtered below. NCCL only emits
+    // API events at capture time, and they are the only events carrying graphCaptured.
+    // Checking the flag first avoids repeated stores to a shared cache line on the hot path.
+    if (ctx->commState && isGraphCapturedApiEvent(eDescr) &&
+        !ctx->commState->sawGraphCapture.load(std::memory_order_relaxed))
+    {
+        ctx->commState->sawGraphCapture.store(true, std::memory_order_release);
+        OTEL_TRACE(NCCL_INIT, "Graph capture observed on communicator commHash=%lu (event type %lu)",
+                   (unsigned long)ctx->commState->comm_hash, (unsigned long)type);
     }
 
     // Skip API-level and plugin events that NCCL sends as parents of our requested events.
