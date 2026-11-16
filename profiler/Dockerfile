@@ -102,6 +102,10 @@ RUN pip install "ray[default]==2.60.0"
 # FIXME: Remove this once components are updated to the latest version
 RUN pip install --upgrade pyasn1==0.6.5
 
+# --- Force dnspython upgrade for CVE-2026-128089 (fixed in 2.9.2) ---
+# FIXME: Remove this once the vLLM base ships dnspython >= 2.9.2
+RUN pip install --upgrade dnspython==2.9.2
+
 # --- Remove vulnerable LMCache (CVE-2026-105192, fixed in 0.5.6) ---
 # The cu129 vLLM base ships lmcache 0.4.4, and lmcache >= 0.5.6 is only published for CUDA 13.
 # Mosaic does not use LMCache (KV transfer uses NIXL), so remove it when the installed version is vulnerable.
