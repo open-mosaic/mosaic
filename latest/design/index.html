@@ -690,6 +690,34 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="CUDA Graph Support">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#execution-mode-label" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Execution mode label
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#latency-in-cuda-graph-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Latency in CUDA graph mode
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
           <li class="md-nav__item">
@@ -1596,6 +1624,34 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="CUDA Graph Support">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#execution-mode-label" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Execution mode label
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#latency-in-cuda-graph-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Latency in CUDA graph mode
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
           <li class="md-nav__item">
@@ -1931,6 +1987,26 @@ To capture all events disable CUDA graph use in vLLM by passing the <code>--enfo
 <p><strong>NCCL &gt;= 2.31</strong>: NCCL also adds the host callback when <code>KernelCh</code> events are enabled.
 Every replay, including intra-node replays, emits the events below.
 A dedicated NCCL profiler thread reports <code>KernelCh</code> start and stop timestamps from the GPU for each replay.</p>
+<h4 id="execution-mode-label">Execution mode label<a class="headerlink" href="#execution-mode-label" title="Permanent link">#</a></h4>
+<p>Scale-up metrics carry a <code>scale_up_exec_mode</code> attribute (<code>cuda_graph</code>, <code>non_cuda_graph</code> or <code>unknown</code>) for each communicator.
+A communicator is labelled <code>cuda_graph</code> when NCCL reports an API event (<code>GroupApi</code>, <code>CollApi</code> or <code>P2pApi</code>) with <code>graphCaptured</code> set.
+These API events are emitted once, at capture time.
+With the v4 profiler API, which has no API events, the plugin falls back to a heuristic.
+The heuristic flags the communicator when different operations report the same stale <code>KernelCh</code> start timestamp,
+which is a symptom of NCCL &lt; 2.31 graph replays.
+Once a communicator is labelled <code>cuda_graph</code> it keeps that label.</p>
+<h4 id="latency-in-cuda-graph-mode">Latency in CUDA graph mode<a class="headerlink" href="#latency-in-cuda-graph-mode" title="Permanent link">#</a></h4>
+<p>For each scale-up operation in a <code>cuda_graph</code> communicator, the plugin checks whether the <code>KernelCh</code> timing can be trusted.
+If different operations in a window ever report the same stale start timestamp, the communicator is marked as having stale timers.
+That mark is permanent, and no <code>KernelCh</code> timing on the communicator is trusted after that.
+Otherwise, timing is trusted when every <code>KernelCh</code> event of the operation has a GPU start and stop timestamp.</p>
+<ul>
+<li><strong>Trusted</strong> (the normal case on NCCL &gt;= 2.31): the operation follows the same path as non-graph mode.
+  Rank and channel transfer time, rate and latency are exported.
+  An operation with no <code>KernelCh</code> events also follows this path.</li>
+<li><strong>Not trusted</strong> (stale timers on NCCL &lt; 2.31, or a missing <code>KernelCh</code> stop): only collective count, collective time and
+  rank/channel byte volume are exported.</li>
+</ul>
 <h3 id="circular-buffer-design">Circular Buffer Design<a class="headerlink" href="#circular-buffer-design" title="Permanent link">#</a></h3>
 <p>The plugin uses a lock-free circular buffer design with 4 pre-allocated buffers per communicator:
 - Each buffer holds 100,000 events
