@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.2">
     
     
       
@@ -1480,11 +1480,16 @@ They make use of the <a href="https://github.com/open-mosaic/production-test-fra
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="c1"># results are in JUnitXML and located at ${HOME}/tmp/mosaic/test_results.xml</span>
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>make<span class="w"> </span><span class="nb">test</span>
 </span></code></pre></div>
-<div class="language-bash highlight"><span class="filename">Stand up the container stack without running tests</span><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>make<span class="w"> </span>setup
+<div class="language-bash highlight"><span class="filename">Pull the container images and retry failed pulls</span><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># make pull tries each image up to 3 times, 30 seconds apart.</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="c1"># To change these values, set PULL_ATTEMPTS and PULL_RETRY_DELAY, for example:</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="c1"># make pull PULL_ATTEMPTS=5 PULL_RETRY_DELAY=60</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>make<span class="w"> </span>pull
 </span></code></pre></div>
-<div class="language-bash highlight"><span class="filename">Run tests against an already running container stack</span><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>make<span class="w"> </span>run-tests
+<div class="language-bash highlight"><span class="filename">Stand up the container stack without running tests</span><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>make<span class="w"> </span>setup
 </span></code></pre></div>
-<div class="language-bash highlight"><span class="filename">Shut down and clean up the container stack</span><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>make<span class="w"> </span>cleanup
+<div class="language-bash highlight"><span class="filename">Run tests against an already running container stack</span><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>make<span class="w"> </span>run-tests
+</span></code></pre></div>
+<div class="language-bash highlight"><span class="filename">Shut down and clean up the container stack</span><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>make<span class="w"> </span>cleanup
 </span></code></pre></div>
 
 
