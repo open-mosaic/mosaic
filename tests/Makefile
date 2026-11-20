@@ -57,7 +57,8 @@ check-uv:
 
 # Pull the images for the stack of the selected profile. If a pull fails, try the pull again.
 # Run this target before `setup`. If all attempts fail, this target stops and shows the Docker error.
-# Without this target, `docker compose up` builds mosaic-vllm from its `build:` section.
+# If the pull in `docker compose up` fails, Compose builds mosaic-vllm from its `build:` section.
+# That build cannot run in CI.
 # If PULL_POLICY=missing, this target does not pull images that are on the host.
 # An example is a locally built profiler image.
 # If PULL_POLICY=never, this target does not pull images.
@@ -74,7 +75,7 @@ pull: check-uv
 	fi; \
 	set -a; eval "$$($(PROFILES_CLI) deployment-env $(PROFILE) $(PROFILE_DIR_ARGS))"; set +a; \
 	IMAGES="$$(docker compose -f $(MOSAIC_PATH)/deployments/docker-compose.yml -f "$$VLLM_COMPOSE" \
-		config --images | sort -u)"; \
+		config --images)"; \
 	for IMAGE in $$IMAGES; do \
 		if [ "$(PULL_POLICY)" = missing ] && docker image inspect "$$IMAGE" >/dev/null 2>&1; then \
 			echo "Image $$IMAGE is present; not pulling it (PULL_POLICY=missing)."; \

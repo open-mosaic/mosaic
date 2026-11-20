@@ -104,7 +104,8 @@ jobs:
 
       # Pull the images before the stack starts. If a pull fails, `make pull` tries again.
       # If all attempts fail, the job stops at this step and shows the Docker error.
-      # Without this step, Compose builds mosaic-vllm from its `build:` section. That build cannot run in CI.
+      # If the pull in `docker compose up` fails, Compose builds mosaic-vllm from its `build:` section.
+      # That build cannot run in CI. This step stops the job before that build starts.
       - name: Pull container images
         run: |
           if ! make pull; then
