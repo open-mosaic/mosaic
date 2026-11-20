@@ -23,16 +23,22 @@ PROFILE_ARGS := --workload-profile $(PROFILE) $(PROFILE_DIR_ARGS)
 # status when the profile is externally deployed. See docs/docs/profiles.md.
 PROFILES_CLI = cd $(TESTS_DIR) && uv run python -m profiler_otel.profiles
 
-# Pull policy for `docker compose up` in setup. CI sets this to "missing" when it tests a
-# locally built profiler image (MOSAIC_VLLM_IMAGE), which cannot be pulled from a registry.
+# Pull policy for `pull` and for `docker compose up` in `setup`.
+# CI sets this value to "missing" when CI tests a locally built profiler image (MOSAIC_VLLM_IMAGE).
+# That image is not in a registry, so `docker pull` cannot get it.
 PULL_POLICY ?= always
+
+# The maximum number of times that `pull` tries to pull each image.
+PULL_ATTEMPTS ?= 3
+# The time, in seconds, between two pull attempts.
+PULL_RETRY_DELAY ?= 30
 
 FRAMEWORK_SERVICE_NAME ?= production-test-framework
 FRAMEWORK_CONTAINER_NAME ?= production-test-framework
 
 UV_INSTALL_URL ?= https://docs.astral.sh/uv/getting-started/installation/
 
-.PHONY: check-uv setup run-tests copy-test-results test cleanup
+.PHONY: check-uv pull setup run-tests copy-test-results test cleanup
 
 # These targets should not stop the make workflow if they fail
 .IGNORE: copy-test-results
@@ -48,6 +54,43 @@ check-uv:
 		echo ""; \
 		exit 1; \
 	}
+
+# Pull the images for the stack of the selected profile. If a pull fails, try the pull again.
+# Run this target before `setup`. If all attempts fail, this target stops and shows the Docker error.
+# Without this target, `docker compose up` builds mosaic-vllm from its `build:` section.
+# If PULL_POLICY=missing, this target does not pull images that are on the host.
+# An example is a locally built profiler image.
+# If PULL_POLICY=never, this target does not pull images.
+pull: check-uv
+	@set -e; \
+	VLLM_COMPOSE="$$($(PROFILES_CLI) compose-file $(PROFILE) $(PROFILE_DIR_ARGS))"; \
+	if [ -z "$$VLLM_COMPOSE" ]; then \
+		echo "Profile '$(PROFILE)' is externally deployed; nothing to pull."; \
+		exit 0; \
+	fi; \
+	if [ "$(PULL_POLICY)" = never ]; then \
+		echo "PULL_POLICY=never; not pulling images."; \
+		exit 0; \
+	fi; \
+	set -a; eval "$$($(PROFILES_CLI) deployment-env $(PROFILE) $(PROFILE_DIR_ARGS))"; set +a; \
+	IMAGES="$$(docker compose -f $(MOSAIC_PATH)/deployments/docker-compose.yml -f "$$VLLM_COMPOSE" \
+		config --images | sort -u)"; \
+	for IMAGE in $$IMAGES; do \
+		if [ "$(PULL_POLICY)" = missing ] && docker image inspect "$$IMAGE" >/dev/null 2>&1; then \
+			echo "Image $$IMAGE is present; not pulling it (PULL_POLICY=missing)."; \
+			continue; \
+		fi; \
+		ATTEMPT=1; \
+		until docker pull "$$IMAGE"; do \
+			if [ "$$ATTEMPT" -ge "$(PULL_ATTEMPTS)" ]; then \
+				echo "Error: could not pull $$IMAGE after $(PULL_ATTEMPTS) attempts. See the Docker error above." >&2; \
+				exit 1; \
+			fi; \
+			echo "Pull of $$IMAGE failed (attempt $$ATTEMPT of $(PULL_ATTEMPTS)). Retrying in $(PULL_RETRY_DELAY) s..."; \
+			ATTEMPT=$$((ATTEMPT + 1)); \
+			sleep $(PULL_RETRY_DELAY); \
+		done; \
+	done
 
 # Start the container stack the selected profile describes. An externally deployed profile
 # expects the serving and observability stacks to be up already, so there is nothing to do.

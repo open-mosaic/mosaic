@@ -39,6 +39,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # The results file is outside the workspace. The file stays on the runner after each run.
+      # Remove the file. If a run stops before pytest, the report shows no results, not old results.
+      - name: Remove earlier test results
+        run: |
+          echo "HOME=$HOME" >> "$GITHUB_ENV"
+          rm -f "$HOME/tmp/mosaic/test_results.xml"
+
       - name: Install uv
         uses: astral-sh/setup-uv@v4
         with:
@@ -95,8 +102,19 @@ jobs:
           echo "PULL_POLICY=missing" >> "$GITHUB_ENV"
           echo "Integration tests will use $LOCAL_PROFILER_IMAGE"
 
+      # Pull the images before the stack starts. If a pull fails, `make pull` tries again.
+      # If all attempts fail, the job stops at this step and shows the Docker error.
+      # Without this step, Compose builds mosaic-vllm from its `build:` section. That build cannot run in CI.
+      - name: Pull container images
+        run: |
+          if ! make pull; then
+            echo "::error title=Image pull failed::Could not pull the container images. See the Docker error in the log of the 'Pull container images' step."
+            exit 1
+          fi
+
+      # The previous step pulled the images. Thus `docker compose up` pulls only the missing images.
       - name: Run integration tests
-        run: echo "HOME=$HOME" >> $GITHUB_ENV && make cleanup && make test
+        run: make cleanup && make test PULL_POLICY=missing
 
       - name: Upload test results
         if: always()
@@ -106,6 +124,8 @@ jobs:
           path: ${{ env.HOME }}/tmp/mosaic/test_results.xml
           retention-days: 7
 
+      # If pytest did not run, the results file does not exist.
+      # Then this step fails with "No test report files were found". This step does not show old results.
       - name: Report test results
         if: always()
         uses: dorny/test-reporter@v2.5.0
