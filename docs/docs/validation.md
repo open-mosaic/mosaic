@@ -91,6 +91,13 @@ cd tests
 make test
 ```
 
+```bash title="Pull the container images and retry failed pulls"
+# make pull tries each image up to 3 times, 30 seconds apart.
+# To change these values, set PULL_ATTEMPTS and PULL_RETRY_DELAY, for example:
+# make pull PULL_ATTEMPTS=5 PULL_RETRY_DELAY=60
+make pull
+```
+
 ```bash title="Stand up the container stack without running tests"
 make setup
 ```
